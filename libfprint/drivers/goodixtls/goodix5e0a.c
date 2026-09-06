@@ -1,21 +1,22 @@
-// Goodix TLS driver for libfprint - 27c6:5e0a (Realme Book / ChicagoH)
-// Clean-room reverse engineering from passive USB captures of Windows driver traffic.
-
-// Copyright (C) 2026 The libfprint Goodix 5e0a contributors
-
-// This library is free software; you can redistribute it and/or
-// modify it under the terms of the GNU Lesser General Public
-// License as published by the Free Software Foundation; either
-// version 2.1 of the License, or (at your option) any later version.
-
-// This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-// Lesser General Public License for more details.
-
-// You should have received a copy of the GNU Lesser General Public
-// License along with this library; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+/* Goodix TLS driver for libfprint - 27c6:5e0a (Realme Book / ChicagoH)
+ * Clean-room reverse engineering from passive USB captures of Windows driver traffic.
+ *
+ * Copyright (C) 2026 The libfprint Goodix 5e0a contributors
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
 
 #include "drivers/goodixtls/goodix5xx.h"
 #include "fp-device.h"
@@ -60,8 +61,6 @@ G_DECLARE_FINAL_TYPE (FpiDeviceGoodixTls5e0a, fpi_device_goodixtls5e0a, FPI,
 
 G_DEFINE_TYPE (FpiDeviceGoodixTls5e0a, fpi_device_goodixtls5e0a,
                FPI_TYPE_DEVICE_GOODIXTLS5XX);
-
-// ---- ACTIVATE SECTION START ----
 
 enum activate_states {
   ACTIVATE_READ_AND_NOP,
@@ -178,12 +177,6 @@ dev_activate (FpImageDevice *img_dev)
   fpi_ssm_start (fpi_ssm_new (dev, activate_run_state, ACTIVATE_NUM_STATES),
                  activate_complete);
 }
-
-// ---- ACTIVATE SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- SCAN SECTION START (Windows-faithful steady-state port) ----
 
 enum goodix5e0a_scan_states {
   SCAN_5E0A_SESSION_AE,
@@ -634,8 +627,6 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
   fpi_image_device_deactivate_complete (img_dev, tls_err);
 }
 
-// ---- SCAN SECTION END ----
-
 static void
 fpi_device_goodixtls5e0a_init (FpiDeviceGoodixTls5e0a *self)
 {
@@ -941,7 +932,7 @@ fpi_device_goodixtls5e0a_class_init (FpiDeviceGoodixTls5e0aClass * class)
   dev_class->id_table = goodix_5e0a_id_table;
   dev_class->nr_enroll_stages = 12;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
-  dev_class->temp_hot_seconds = -1; // Disable thermal watchdog
+  dev_class->temp_hot_seconds = -1; /* Disable thermal watchdog */
   dev_class->suspend = goodix5e0a_suspend;
   dev_class->resume = goodix5e0a_resume;
 

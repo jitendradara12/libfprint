@@ -1,22 +1,23 @@
-// Goodix Tls driver for libfprint
-
-// Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
-// Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
-// Copyright (C) 2021 Natasha England-Elbro <natasha@natashaee.me>
-
-// This library is free software; you can redistribute it and/or
-// modify it under the terms of the GNU Lesser General Public
-// License as published by the Free Software Foundation; either
-// version 2.1 of the License, or (at your option) any later version.
-
-// This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-// Lesser General Public License for more details.
-
-// You should have received a copy of the GNU Lesser General Public
-// License along with this library; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+/* Goodix TLS driver for libfprint
+ *
+ * Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
+ * Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
+ * Copyright (C) 2021 Natasha England-Elbro <natasha@natashaee.me>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
 
 #include "fpi-log.h"
 #include "fpi-ssm.h"
@@ -66,9 +67,6 @@ typedef struct
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (FpiDeviceGoodixTls, fpi_device_goodixtls,
                                      FP_TYPE_IMAGE_DEVICE);
 
-// TODO remove every GDestroyNotify
-// TODO add cmd timeouts
-
 gchar *
 data_to_str (guint8 *data, guint32 length)
 {
@@ -79,8 +77,6 @@ data_to_str (guint8 *data, guint32 length)
 
   return string;
 }
-
-// ---- GOODIX RECEIVE SECTION START ----
 
 void
 goodix_receive_done (FpDevice *dev, guint8 *data, guint16 length,
@@ -127,7 +123,7 @@ goodix_receive_none_tolerant (FpDevice *dev, guint8 *data, guint16 length,
   GoodixNoneCallback callback = (GoodixNoneCallback) cb_info->callback;
 
   if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
-    g_clear_error (&error); /* ponytail: NOP silence = buffer already empty */
+    g_clear_error (&error); /* Flush error ignored: buffer already empty */
 
   callback (dev, cb_info->user_data, error);
 }
@@ -188,7 +184,7 @@ goodix_receive_reset (FpDevice *dev, guint8 *data, guint16 length,
     }
 
   callback (dev, data[0] == 0x00 ? FALSE : TRUE,
-            GUINT16_FROM_LE (*(guint16 *) (data + sizeof (guint8))), // TODO
+            GUINT16_FROM_LE (*(guint16 *) (data + sizeof (guint8))),
             cb_info->user_data, NULL);
 }
 
@@ -289,7 +285,7 @@ goodix_receive_firmware_version (FpDevice *dev, guint8 *data,
 
   memcpy (payload, data, length);
 
-  // Some device send the firmware without the null terminator
+  /* Some devices send the firmware without the null terminator. */
   payload[length] = 0x00;
 
   callback (dev, payload, cb_info->user_data, NULL);
@@ -313,7 +309,6 @@ goodix_receive_ack (FpDevice *dev, guint8 *data, guint16 length,
 
   if (!ack->always_true)
     {
-      // Warn about error.
       fp_warn ("Invalid ACK flags: 0x%02x", data[sizeof (guint8)]);
       return;
     }
@@ -354,14 +349,12 @@ goodix_receive_protocol (FpDevice *dev, guint8 *data, guint32 length)
   guint8 cmd;
   g_autofree guint8 *payload = NULL;
   guint16 payload_len;
-  gboolean valid_checksum, valid_null_checksum; // TODO implement checksum.
+  gboolean valid_checksum, valid_null_checksum;
 
   if (!goodix_decode_protocol (data, length, &cmd, &payload, &payload_len,
                                &valid_checksum, &valid_null_checksum))
     {
       fp_err ("Incomplete, size: %d", length);
-      // Protocol is not full, we still need data.
-      // TODO implement protocol assembling.
       return;
     }
 
@@ -399,7 +392,7 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
   guint8 flags;
   g_autofree guint8 *payload = NULL;
   guint16 payload_len;
-  gboolean valid_checksum; // TODO implement checksum.
+  gboolean valid_checksum;
 
   priv->data = g_realloc (priv->data, priv->length + length);
   memcpy (priv->data + priv->length, data, length);
@@ -408,7 +401,6 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
   if (!goodix_decode_pack (priv->data, priv->length, &flags, &payload,
                            &payload_len, &valid_checksum))
     {
-      // Packet is not full, we still need data.
       fp_dbg ("not full packet");
       return;
     }
@@ -459,11 +451,9 @@ goodix_receive_data_cb (FpiUsbTransfer *transfer, FpDevice *dev,
     }
   if (error)
     {
-      // Warn about error and free it.
       fp_warn ("Receive data error: %s", error->message);
       g_error_free (error);
 
-      // Retry receiving data and return.
       goodix_receive_data (dev);
       return;
     }
@@ -540,12 +530,6 @@ goodix_receive_data (FpDevice *dev)
                            goodix_receive_data_cb, NULL);
 }
 
-// ---- GOODIX RECEIVE SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- GOODIX SEND SECTION START ----
-
 gboolean
 goodix_send_data (FpDevice *dev, guint8 *data, guint32 length,
                   GDestroyNotify free_func, GError **error)
@@ -608,11 +592,10 @@ goodix_send_protocol (
 
   if (priv->ack || priv->reply || priv->timeout)
     {
-      // A command is already running.
       fp_warn ("A command is already running: 0x%02x", priv->cmd);
       if (free_func)
         free_func ((void *) payload);
-      // ponytail: fail loudly so the waiting SSM aborts instead of hanging
+      /* Fail loudly so the waiting SSM aborts instead of hanging. */
       GError *collision_error =
         g_error_new (G_IO_ERROR, G_IO_ERROR_BUSY,
                      "A command is already running: 0x%02x", priv->cmd);
@@ -651,8 +634,7 @@ goodix_send_nop (FpDevice *dev, GoodixNoneCallback callback,
   GoodixNop payload = {.unknown = 0x00000000};
   GoodixCallbackInfo *cb_info;
 
-  /* ponytail: flush, not a handshake — silence is success (see tolerant
-     receiver); a real ACK is still validated when one arrives. */
+  /* Flush command: silence from the MCU indicates success. */
   if (callback)
     {
       cb_info = malloc (sizeof (GoodixCallbackInfo));
@@ -854,7 +836,7 @@ goodix_send_write_sensor_register (FpDevice *dev, guint16 address,
                                    GoodixNoneCallback callback,
                                    gpointer user_data)
 {
-  // Only support one address and one value
+  /* Only support one address and one value. */
 
   GoodixWriteSensorRegister payload = {.multiples = FALSE,
                                        .address = GUINT16_TO_LE (address),
@@ -885,7 +867,7 @@ goodix_send_read_sensor_register (FpDevice *dev, guint16 address,
                                   GoodixDefaultCallback callback,
                                   gpointer user_data)
 {
-  // Only support one address
+  /* Only support one address. */
 
   GoodixReadSensorRegister payload = {
     .multiples = FALSE, .address = GUINT16_TO_LE (address), .length = length
@@ -993,7 +975,7 @@ void
 goodix_send_reset (FpDevice *dev, gboolean reset_sensor, guint8 sleep_time,
                    GoodixResetCallback callback, gpointer user_data)
 {
-  // Only support reset sensor
+  /* Only support reset sensor. */
 
   GoodixReset payload = {.soft_reset_mcu = FALSE,
                          .reset_sensor = reset_sensor ? TRUE : FALSE,
@@ -1109,8 +1091,7 @@ goodix_send_tls_successfully_established (FpDevice          *dev,
 
       cb_info->callback = G_CALLBACK (callback);
       cb_info->user_data = user_data;
-      // special case: timeout needs to be at least 10ms and it will always timeout for some reason
-      // todo: work out why it always times out for this but not the python driver
+      /* Timeout needs to be at least 10ms. */
 
       goodix_send_protocol (dev, GOODIX_CMD_TLS_SUCCESSFULLY_ESTABLISHED,
                             (guint8 *) &payload, sizeof (payload), NULL, TRUE,
@@ -1127,7 +1108,7 @@ void
 goodix_send_set_drv_state (FpDevice *dev, GoodixNoneCallback cb,
                            gpointer ud)
 {
-  // ponytail: reuse 2-byte helper for the 01 00 payload (goodix.py:611-622)
+  /* Send 2-byte payload [0x01, 0x00]. */
   GoodixDefault payload = {.unused_flags = 0x01};
   GoodixCallbackInfo *cb_info;
 
@@ -1227,7 +1208,7 @@ goodix_send_preset_psk_write (FpDevice *dev, guint32 flags, guint8 *psk,
                               GoodixSuccessCallback callback,
                               gpointer user_data)
 {
-  // Only support one flags, one payload and one length
+  /* Only support one flag, one payload, and one length. */
 
   guint8 *payload = g_malloc (sizeof (GoodixPresetPsk) + length);
   GoodixPresetPsk *preset_psk = (GoodixPresetPsk *) payload;
@@ -1283,12 +1264,6 @@ goodix_send_preset_psk_read (FpDevice *dev, guint32 flags, guint16 length,
                         sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE, NULL,
                         NULL);
 }
-
-// ---- GOODIX SEND SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- DEV SECTION START ----
 
 gboolean
 goodix_dev_init (FpDevice *dev, GError **error)
@@ -1377,12 +1352,6 @@ goodix_dev_deinit (FpDevice *dev, GError **error)
                                          class->interface, 0, error);
 }
 
-// ---- DEV SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- TLS SECTION START ----
-
 void
 goodix_read_tls (FpDevice *dev, GoodixTlsCallback callback,
                  gpointer user_data)
@@ -1410,8 +1379,6 @@ on_goodix_tls_read_handshake (FpDevice *dev, guint8 *data,
                               guint16 length, gpointer user_data,
                               GError *error)
 {
-  //   goodix_tls_handshake_state* state = (goodix_tls_handshake_state*)
-  //   user_data;
   FpiSsm *ssm = user_data;
 
   if (error)
@@ -1579,7 +1546,7 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
     }
   else if (stage < TLS_HANDSHAKE_STAGE_CHANGE_CIPHER_S)
     {
-      // Still proxying from hardware
+      /* Still proxying from hardware. */
       fpi_ssm_set_data (ssm, dev, NULL);
       goodix_read_tls (dev, on_goodix_tls_read_handshake, ssm);
     }
@@ -1772,8 +1739,6 @@ goodix_tls_read_image (FpDevice *dev, GoodixImageCallback callback,
 
   goodix_send_mcu_get_image (dev, goodix_tls_ready_image_handler, cb_info);
 }
-
-// ---- TLS SECTION END ----
 
 static void
 fpi_device_goodixtls_init (FpiDeviceGoodixTls *self)

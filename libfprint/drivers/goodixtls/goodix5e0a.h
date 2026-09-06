@@ -1,21 +1,22 @@
-// Goodix TLS driver for libfprint - 27c6:5e0a (Realme Book / ChicagoH)
-// Clean-room reverse engineering from passive USB captures of Windows driver traffic.
-
-// Copyright (C) 2026 The libfprint Goodix 5e0a contributors
-
-// This library is free software; you can redistribute it and/or
-// modify it under the terms of the GNU Lesser General Public
-// License as published by the Free Software Foundation; either
-// version 2.1 of the License, or (at your option) any later version.
-
-// This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-// Lesser General Public License for more details.
-
-// You should have received a copy of the GNU Lesser General Public
-// License along with this library; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+/* Goodix TLS driver for libfprint - 27c6:5e0a (Realme Book / ChicagoH)
+ * Clean-room reverse engineering from passive USB captures of Windows driver traffic.
+ *
+ * Copyright (C) 2026 The libfprint Goodix 5e0a contributors
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
 
 #pragma once
 
@@ -44,7 +45,7 @@
 #define GOODIX_5E0A_ENROLL_MIN_MINUTIAE (12)
 
 
-// Sensor Analog Front-End (AFE) Gain/Exposure Register Configuration
+/* Sensor Analog Front-End (AFE) Gain/Exposure Register Configuration */
 #define GOODIX_5E0A_REG_GAIN_EXPOSURE (0x022c)
 #define GOODIX_5E0A_REG_GAIN_EXPOSURE_VAL (0x0305)         /* Little-endian 16-bit: \x05\x03 */
 #define GOODIX_5E0A_REG_GAIN_EXPOSURE_CALIB_VAL (0x030a)   /* Little-endian 16-bit: \x0a\x03 */
@@ -63,7 +64,7 @@ static const guint8 goodix_5e0a_psk[] = {
   0x26, 0x9c, 0xe7, 0x52, 0xd7, 0xa8, 0xb2, 0xab
 };
 
-// ChicagoH GF3658 DN3 Configuration (256 bytes, wbdi.dll offset 0x197c50, checksum 0x0e53)
+/* ChicagoH GF3658 DN3 Configuration (256 bytes, wbdi.dll offset 0x197c50, checksum 0x0e53) */
 static const guint8 goodix_5e0a_config[256] = {
   0xb0, 0x11, 0x60, 0x71, 0x2c, 0x9d, 0x2c, 0xc9, 0x1c, 0xe5, 0x18, 0xfd, 0x00, 0xfd, 0x00, 0xfd,
   0x03, 0xba, 0x00, 0x01, 0x80, 0xca, 0x00, 0x04, 0x00, 0x84, 0x00, 0x15, 0xb3, 0x86, 0x00, 0x00,

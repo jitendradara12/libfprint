@@ -1,32 +1,32 @@
-// Goodix Tls driver for libfprint
-
-// Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
-// Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
-// Copyright (C) 2021 Natasha England-Elbro <ashenglandelbro@protonmail.com>
-
-// This library is free software; you can redistribute it and/or
-// modify it under the terms of the GNU Lesser General Public
-// License as published by the Free Software Foundation; either
-// version 2.1 of the License, or (at your option) any later version.
-
-// This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-// Lesser General Public License for more details.
-
-// You should have received a copy of the GNU Lesser General Public
-// License along with this library; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+/* Goodix TLS driver for libfprint
+ *
+ * Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
+ * Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
+ * Copyright (C) 2021 Natasha England-Elbro <ashenglandelbro@protonmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
 
 #pragma once
 
 #include "drivers_api.h"
 
-// 1 seconds USB timeout
+/* 1 second USB timeout */
 #define GOODIX_TIMEOUT (1000)
 
-/* ponytail: NOP is a flush — the MCU is routinely silent on it (reference
-   tolerates no-reply as success), so it gets a short window, not the full. */
+/* NOP is a flush operation where silence from the MCU is expected. */
 #define GOODIX_NOP_TIMEOUT (200)
 
 G_DECLARE_DERIVABLE_TYPE (FpiDeviceGoodixTls, fpi_device_goodixtls, FPI,
@@ -98,8 +98,6 @@ typedef void (*GoodixImageCallback)(FpDevice *dev,
 
 gchar *data_to_str (guint8 *data,
                     guint32 length);
-
-// ---- GOODIX RECEIVE SECTION START ----
 
 /**
  * @defgroup goodixrecv Goodix receive functions
@@ -194,11 +192,6 @@ void goodix_receive_data (FpDevice *dev);
  */
 void goodix_start_read_loop (FpDevice *dev);
 void goodix_stop_read_loop (FpDevice *dev);
-// ---- GOODIX RECEIVE SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- GOODIX SEND SECTION START ----
 
 /**
  * @brief Send raw data to the device over USB
@@ -510,12 +503,6 @@ void goodix_send_read_otp (FpDevice             *dev,
                            GoodixDefaultCallback callback,
                            gpointer              user_data);
 
-// ---- GOODIX SEND SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- DEV SECTION START ----
-
 /**
  * @brief Claim the resources used for communcation with the device
  *
@@ -554,12 +541,6 @@ void goodix_reset_state (FpDevice *dev);
  */
 guint goodix_activation_gen_get (FpDevice *dev);
 guint goodix_activation_gen_bump (FpDevice *dev);
-
-// ---- DEV SECTION END ----
-
-// -----------------------------------------------------------------------------
-
-// ---- TLS SECTION START ----
 
 /**
  * @brief Read a TLS packet from the device
@@ -604,5 +585,3 @@ gboolean goodix_shutdown_tls (FpDevice *dev,
 void goodix_tls_read_image (FpDevice           *dev,
                             GoodixImageCallback callback,
                             gpointer            user_data);
-
-// ---- TLS SECTION END ----

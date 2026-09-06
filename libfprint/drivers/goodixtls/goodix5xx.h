@@ -1,22 +1,23 @@
-// Goodix Tls driver for libfprint
-
-// Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
-// Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
-// Copyright (C) 2021 Natasha England-Elbro <ashenglandelbro@protonmail.com>
-
-// This library is free software; you can redistribute it and/or
-// modify it under the terms of the GNU Lesser General Public
-// License as published by the Free Software Foundation; either
-// version 2.1 of the License, or (at your option) any later version.
-
-// This library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-// Lesser General Public License for more details.
-
-// You should have received a copy of the GNU Lesser General Public
-// License along with this library; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+/* Goodix TLS driver for libfprint
+ *
+ * Copyright (C) 2021 Alexander Meiler <alex.meiler@protonmail.com>
+ * Copyright (C) 2021 Matthieu CHARETTE <matthieu.charette@gmail.com>
+ * Copyright (C) 2021 Natasha England-Elbro <ashenglandelbro@protonmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
 
 #pragma once
 
@@ -62,25 +63,25 @@ struct _FpiDeviceGoodixTls5xxClass
 {
   FpiDeviceGoodixTlsClass       parent;
 
-  GoodixTls5xxGetMcuFn          get_mcu_cfg; ///< provide the mcu config before fdt commands
+  GoodixTls5xxGetMcuFn          get_mcu_cfg; /* Provide MCU config before FDT commands */
   GoodixTls5xxGetMcuFn          get_fdt_down_cfg;
   GoodixTls5xxGetMcuFn          get_fdt_up_cfg;
-  GoodixTls5xxProcessFrameFn    process_frame; ///< process a frame after it is decoded (e.g. crop it)
-  GoodixTls5xxProcessRawFrameFn process_raw_frame; ///< process raw 12-bit ADC frame directly
-  GoodixTls5xxResetStateFn      reset_state; ///< callback to reset the state, may be NULL
+  GoodixTls5xxProcessFrameFn    process_frame; /* Process a frame after decoding (e.g. crop) */
+  GoodixTls5xxProcessRawFrameFn process_raw_frame; /* Process raw 12-bit ADC frame directly */
+  GoodixTls5xxResetStateFn      reset_state; /* Callback to reset state, may be NULL */
 
-  guint16                       scan_width; ///< width of the raw scanner image
-  guint16                       scan_height; ///< height of the raw scanner image
+  guint16                       scan_width; /* Width of raw scanner image */
+  guint16                       scan_height; /* Height of raw scanner image */
 
-  const char                  * firmware_version; ///< only needed if goodixtls5xx_check_firmware_version() is used
+  const char                  * firmware_version; /* For goodixtls5xx_check_firmware_version() */
 
-  /// only needed if goodixtls5xx_check_preset_psk_read() is used
+  /* For goodixtls5xx_check_preset_psk_read() */
   int            psk_flags;
   guint16        psk_len;
   const guint8 * psk;
 
-  int            reset_number; ///< only needed if goodixtls5xx_check_reset() is used
-  gboolean       has_calibration; ///< TRUE if device requires calibration step (e.g. 511)
+  int            reset_number; /* For goodixtls5xx_check_reset() */
+  gboolean       has_calibration; /* TRUE if device requires calibration step (e.g. 511) */
 };
 
 /**
