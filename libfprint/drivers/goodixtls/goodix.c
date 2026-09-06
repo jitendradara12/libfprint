@@ -555,11 +555,12 @@ goodix_send_data (FpDevice *dev, guint8 *data, guint32 length,
 
   for (guint32 i = 0; i < length; i += GOODIX_EP_OUT_MAX_BUF_SIZE)
     {
+      guint32 chunk_len = MIN ((guint32) GOODIX_EP_OUT_MAX_BUF_SIZE, length - i);
       FpiUsbTransfer *transfer = fpi_usb_transfer_new (dev);
       transfer->short_is_error = TRUE;
 
       fpi_usb_transfer_fill_bulk_full (transfer, class->ep_out, data + i,
-                                       GOODIX_EP_OUT_MAX_BUF_SIZE, NULL);
+                                       chunk_len, NULL);
 
       if (!fpi_usb_transfer_submit_sync (transfer, GOODIX_TIMEOUT,
                                          error))
@@ -1361,11 +1362,13 @@ goodix_dev_deinit (FpDevice *dev, GError **error)
   /* Teardown entry: orphan any in-flight TLS activation. */
   goodix_activation_gen_bump (dev);
 
-  if (priv->timeout)
-    g_source_destroy (priv->timeout);
-  g_free (priv->data);
   g_cancellable_cancel (priv->transfer_cancel_tkn);
-  goodix_shutdown_tls (dev, error);
+  g_clear_object (&priv->transfer_cancel_tkn);
+
+  g_autoptr(GError) tls_err = NULL;
+  goodix_shutdown_tls (dev, &tls_err);
+  if (tls_err)
+    fp_warn ("TLS shutdown warning: %s", tls_err->message);
 
   goodix_reset_state (dev);
   priv->inited = FALSE;
@@ -1662,8 +1665,20 @@ goodix_tls_init (FpDevice *dev, GoodixNoneCallback callback, gpointer user_data)
   GError *err = NULL;
   if (!goodix_tls_server_init (priv->tls_hop, &err))
     {
-      fp_err ("failed to init tls server, error: %s, code: %d", err->message,
-              err->code);
+      fp_err ("failed to init tls server, error: %s, code: %d",
+              err ? err->message : "unknown",
+              err ? err->code : 0);
+      if (priv->tls_ready_callback)
+        {
+          ((GoodixNoneCallback) priv->tls_ready_callback->callback) (
+            dev, priv->tls_ready_callback->user_data, err);
+          g_clear_pointer (&priv->tls_ready_callback, g_free);
+        }
+      else
+        {
+          g_clear_error (&err);
+        }
+      g_clear_pointer (&priv->tls_hop, g_free);
       return;
     }
 

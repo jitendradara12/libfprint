@@ -18,26 +18,23 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
-#include <arpa/inet.h>
 #include <errno.h>
 #include <glib.h>
-#include <netinet/in.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/tls1.h>
-#include <poll.h>
 #include <pthread.h>
-#include <signal.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "drivers_api.h"
 #include "fp-device.h"
 #include "fpi-device.h"
-#include "glibconfig.h"
 #include "goodix.h"
+#include "goodix5xx.h"
 #include "goodixtls.h"
 
 #ifndef fpi_device_emulation_mode_enabled
@@ -53,8 +50,6 @@ err_from_ssl (void)
   return g_error_new (FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
                       "SSL error (0x%lx): %s", code, msg ? msg : "unknown SSL error");
 }
-
-#include "goodix5xx.h"
 
 #define GOODIX_TLS_CIPHERS "PSK-AES128-CBC-SHA256:ALL:@SECLEVEL=1"
 
@@ -155,7 +150,7 @@ goodix_tls_server_read (GoodixTlsServer *self, guint8 *data,
 {
   int retr = SSL_read (self->ssl_layer, data, length * sizeof (guint8));
 
-  if (retr <= 0)
+  if (retr <= 0 && error)
     *error = err_from_ssl ();
   return retr;
 }
@@ -225,10 +220,10 @@ goodix_tls_server_deinit (GoodixTlsServer *self, GError **error)
     shutdown (self->sock_fd, SHUT_RDWR);
 
   /* Now join the serve thread which unblocks instantly */
-  if (self->serve_thread)
+  if (self->serve_thread_started)
     {
       pthread_join (self->serve_thread, NULL);
-      self->serve_thread = 0;
+      self->serve_thread_started = FALSE;
     }
 
   /* Close file descriptors after the worker thread has safely exited */
@@ -264,7 +259,7 @@ goodix_tls_server_init (GoodixTlsServer *self, GError **error)
 {
   self->sock_fd = -1;
   self->client_fd = -1;
-  self->serve_thread = 0;
+  self->serve_thread_started = FALSE;
   self->ssl_layer = NULL;
   self->ssl_ctx = NULL;
   self->accept_done = 0;
@@ -284,10 +279,8 @@ goodix_tls_server_init (GoodixTlsServer *self, GError **error)
   if (self->ssl_ctx == NULL)
     {
       fp_dbg ("Unable to create TLS server context\n");
-      *error = fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL, "Unable to "
-                                                                  "create TLS "
-                                                                  "server "
-                                                                  "context");
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "Unable to create TLS server context");
       return FALSE;
     }
   tls_server_config_ctx (self->ssl_ctx);
@@ -309,7 +302,15 @@ goodix_tls_server_init (GoodixTlsServer *self, GError **error)
   tls_config_ssl (self->ssl_layer);
   SSL_set_fd (self->ssl_layer, self->sock_fd);
 
-  pthread_create (&self->serve_thread, 0, goodix_tls_init_serve, self);
+  if (pthread_create (&self->serve_thread, NULL, goodix_tls_init_serve, self) == 0)
+    self->serve_thread_started = TRUE;
+  else
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "Failed to create TLS serve thread");
+      goodix_tls_server_deinit (self, NULL);
+      return FALSE;
+    }
 
   return TRUE;
 }

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <glib.h>
+#include <openssl/ssl.h>
+#include <pthread.h>
 
 struct _GoodixTlsServer;
 
@@ -44,6 +46,7 @@ typedef struct _GoodixTlsServer
   int       client_fd;
 
   pthread_t serve_thread;
+  gboolean  serve_thread_started;
 
   /* SSL_accept outcome, recorded by the serve thread before it exits.
    * accept_done is an atomic flag; accept_ret/accept_err are valid once set.

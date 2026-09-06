@@ -27,6 +27,7 @@
 #include "drivers_api.h"
 #include "goodix.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 
@@ -527,7 +528,7 @@ dev_deinit (FpImageDevice * img_dev)
   FpDevice *dev = FP_DEVICE (img_dev);
   GError *error = NULL;
 
-  if (goodix_dev_deinit (dev, &error))
+  if (!goodix_dev_deinit (dev, &error))
     {
       fpi_image_device_close_complete (img_dev, error);
       return;
@@ -541,7 +542,7 @@ dev_init (FpImageDevice *img_dev)
   FpDevice *dev = FP_DEVICE (img_dev);
   GError *error = NULL;
 
-  if (goodix_dev_init (dev, &error))
+  if (!goodix_dev_init (dev, &error))
     {
       fpi_image_device_open_complete (img_dev, error);
       return;
