@@ -543,6 +543,28 @@ guint goodix_activation_gen_get (FpDevice *dev);
 guint goodix_activation_gen_bump (FpDevice *dev);
 
 /**
+ * @brief Warm-activation boot sequence counter.
+ *
+ * Bumped in goodix_dev_init when a USB reset is actually performed.
+ *
+ * @param dev
+ * @return current boot sequence number
+ */
+guint goodix_boot_seq_get (FpDevice *dev);
+
+/**
+ * @brief Clean-vs-dirty session lifetime tracking for conditional USB reset.
+ *
+ * Mark clean only when a session completes deactivate cleanly with a live
+ * TLS session; mark dirty on any error or full teardown.
+ *
+ * @param dev
+ */
+void goodix_session_mark_clean (FpDevice *dev);
+void goodix_session_mark_dirty (FpDevice *dev);
+gboolean goodix_session_is_clean (FpDevice *dev);
+
+/**
  * @brief Read a TLS packet from the device
  * @note You probably won't ever need to call this directly from your driver
  *
@@ -574,6 +596,14 @@ void goodix_tls_init (FpDevice          *dev,
  */
 gboolean goodix_shutdown_tls (FpDevice *dev,
                               GError  **error);
+
+/**
+ * @brief Check whether a negotiated TLS session context is currently alive.
+ *
+ * @param dev
+ * @return TRUE when priv->tls_hop != NULL, FALSE otherwise
+ */
+gboolean goodix_tls_is_alive (FpDevice *dev);
 
 /**
  * @brief Read a TLS encrypted image from the device and decrypt it

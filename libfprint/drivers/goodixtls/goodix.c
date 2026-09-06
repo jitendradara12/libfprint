@@ -60,6 +60,21 @@ typedef struct
    * TLS completion callbacks drop on mismatch. */
   guint         activation_gen;
 
+  /* Boot sequence counter coupled to actual USB reset. */
+  guint         boot_seq;
+
+  /* Conditional USB reset flag: TRUE only when previous session closed cleanly.
+   * FALSE is the safe direction (reset taken on open). */
+  gboolean      clean_close;
+
+  /* USB device identity snapshot to detect kernel re-enumeration. */
+  guint8        last_usb_bus;
+  guint8        last_usb_addr;
+  guint8        last_usb_port;
+  guint16       last_usb_vid;
+  guint16       last_usb_pid;
+  gboolean      usb_identity_valid;
+
   GCancellable *transfer_cancel_tkn;
   gboolean      inited;
 } FpiDeviceGoodixTlsPrivate;
@@ -1282,10 +1297,69 @@ goodix_dev_init (FpDevice *dev, GError **error)
   priv->length = 0;
   priv->transfer_cancel_tkn = g_cancellable_new ();
 
-  g_usb_device_reset (fpi_device_get_usb_device (dev), NULL);
+  /* Conditional USB reset: skip reset only when previous session on
+   * this USB device closed cleanly. Re-enumeration or dirty state forces reset. */
+  {
+    GUsbDevice *usb = fpi_device_get_usb_device (dev);
+    gboolean reenumerated = FALSE;
+    gboolean take_reset;
 
-  return g_usb_device_claim_interface (fpi_device_get_usb_device (dev),
-                                       class->interface, 0, error);
+    if (usb != NULL)
+      {
+        guint8 bus = g_usb_device_get_bus (usb);
+        guint8 addr = g_usb_device_get_address (usb);
+        guint8 port = g_usb_device_get_port_number (usb);
+        guint16 vid = g_usb_device_get_vid (usb);
+        guint16 pid = g_usb_device_get_pid (usb);
+
+        if (priv->usb_identity_valid
+            && (bus != priv->last_usb_bus || addr != priv->last_usb_addr
+                || port != priv->last_usb_port || vid != priv->last_usb_vid
+                || pid != priv->last_usb_pid))
+          {
+            reenumerated = TRUE;
+            priv->clean_close = FALSE;
+          }
+        priv->last_usb_bus = bus;
+        priv->last_usb_addr = addr;
+        priv->last_usb_port = port;
+        priv->last_usb_vid = vid;
+        priv->last_usb_pid = pid;
+        priv->usb_identity_valid = TRUE;
+      }
+    else
+      {
+        reenumerated = TRUE;
+        priv->clean_close = FALSE;
+      }
+
+    take_reset = !priv->clean_close;
+    if (take_reset)
+      {
+        priv->boot_seq++;
+        if (reenumerated)
+          g_message ("5e0a USB reset taken (re-enumerated device, boot_seq=%u)",
+                     priv->boot_seq);
+        else
+          g_message ("5e0a USB reset taken (dirty close, boot_seq=%u)",
+                     priv->boot_seq);
+        g_usb_device_reset (fpi_device_get_usb_device (dev), NULL);
+      }
+    else
+      {
+        g_message ("5e0a USB reset skipped (clean close, boot_seq=%u)",
+                   priv->boot_seq);
+      }
+  }
+
+  {
+    gboolean ok = g_usb_device_claim_interface (fpi_device_get_usb_device (dev),
+                                                class->interface, 0, error);
+
+    if (!ok)
+      priv->clean_close = FALSE;
+    return ok;
+  }
 }
 void
 goodix_reset_state (FpDevice *dev)
@@ -1326,6 +1400,46 @@ goodix_activation_gen_bump (FpDevice *dev)
   return ++priv->activation_gen;
 }
 
+guint
+goodix_boot_seq_get (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  return priv->boot_seq;
+}
+
+void
+goodix_session_mark_clean (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  priv->clean_close = TRUE;
+}
+
+void
+goodix_session_mark_dirty (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  priv->clean_close = FALSE;
+}
+
+gboolean
+goodix_session_is_clean (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  return priv->clean_close;
+}
+
 gboolean
 goodix_dev_deinit (FpDevice *dev, GError **error)
 {
@@ -1333,23 +1447,40 @@ goodix_dev_deinit (FpDevice *dev, GError **error)
   FpiDeviceGoodixTlsClass *class = FPI_DEVICE_GOODIXTLS_GET_CLASS (self);
   FpiDeviceGoodixTlsPrivate *priv =
     fpi_device_goodixtls_get_instance_private (self);
+  gboolean clean_close = priv->clean_close;
+  gboolean released;
 
-  /* Teardown entry: orphan any in-flight TLS activation. */
-  goodix_activation_gen_bump (dev);
+  if (!clean_close)
+    goodix_activation_gen_bump (dev);
 
   g_cancellable_cancel (priv->transfer_cancel_tkn);
   g_clear_object (&priv->transfer_cancel_tkn);
 
-  g_autoptr(GError) tls_err = NULL;
-  goodix_shutdown_tls (dev, &tls_err);
-  if (tls_err)
-    fp_warn ("TLS shutdown warning: %s", tls_err->message);
+  if (!clean_close)
+    {
+      g_autoptr(GError) tls_err = NULL;
+
+      goodix_shutdown_tls (dev, &tls_err);
+      if (tls_err)
+        fp_warn ("TLS shutdown warning: %s", tls_err->message);
+    }
 
   goodix_reset_state (dev);
   priv->inited = FALSE;
 
-  return g_usb_device_release_interface (fpi_device_get_usb_device (dev),
-                                         class->interface, 0, error);
+  released = g_usb_device_release_interface (fpi_device_get_usb_device (dev),
+                                             class->interface, 0, error);
+  if (!released)
+    {
+      priv->clean_close = FALSE;
+      if (clean_close)
+        {
+          goodix_activation_gen_bump (dev);
+          goodix_shutdown_tls (dev, NULL);
+        }
+    }
+
+  return released;
 }
 
 void
@@ -1668,6 +1799,17 @@ goodix_shutdown_tls (FpDevice *dev, GError **error)
     }
   return TRUE;
 }
+
+gboolean
+goodix_tls_is_alive (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  return priv->tls_hop != NULL;
+}
+
 static void
 goodix_tls_ready_image_handler (FpDevice *dev, guint8 *data,
                                 guint16 length, gpointer user_data,

@@ -43,6 +43,7 @@
 
 #define GOODIX_5E0A_CONTRAST_GAIN (1.0f)
 #define GOODIX_5E0A_ENROLL_MIN_MINUTIAE (12)
+#define GOODIX_5E0A_FRAMES_PER_TOUCH 3
 
 
 /* Sensor Analog Front-End (AFE) Gain/Exposure Register Configuration */
