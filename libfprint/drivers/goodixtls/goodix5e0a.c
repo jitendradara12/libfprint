@@ -284,7 +284,7 @@ goodix5e0a_on_down_poll_timeout (FpDevice *dev, gpointer user_data)
 
   send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_DOWN,
                   goodix_5e0a_down_s12, sizeof (goodix_5e0a_down_s12),
-                  0, goodix5e0a_on_fdt_down_reply, ssm);
+                  GOODIX_TIMEOUT, goodix5e0a_on_fdt_down_reply, ssm);
 }
 
 static void
@@ -535,7 +535,7 @@ goodix5e0a_scan_run_state (FpiSsm *ssm, FpDevice *dev)
     case SCAN_5E0A_FDT_DOWN:
       send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_DOWN,
                       goodix_5e0a_down_s12, sizeof (goodix_5e0a_down_s12),
-                      0, goodix5e0a_on_fdt_down_reply, ssm);
+                      GOODIX_TIMEOUT, goodix5e0a_on_fdt_down_reply, ssm);
       break;
 
     case SCAN_5E0A_GET_IMAGE:
