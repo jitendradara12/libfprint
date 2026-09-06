@@ -35,6 +35,7 @@
 #define FP_COMPONENT "goodixtls5e0a"
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
 
 #include "drivers_api.h"
@@ -443,7 +444,6 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
           GOODIX_5E0A_WIDTH, GOODIX_5E0A_HEIGHT);
 
   FpImage *img = process_raw_frame (raw_frame);
-  free (raw_frame);
 
   if (img == NULL)
     {
@@ -451,6 +451,54 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
       img->flags = FPI_IMAGE_COLORS_INVERTED;
       img->ppmm = 500.0 / 25.4;
     }
+
+  /* [DIAG-5E0A] TEMPORARY offline-capture dump, diagnosis only, remove before merge.
+   * Writes native 12-bit PGM + mindtct-input 8-bit PGM per capture to
+   * /tmp/5e0a-dump (mode 0600, biometric data). Never alters the matching
+   * path: dump failures are ignored. Grep DIAG-5E0A to remove. */
+  {
+    static guint diag_seq = 0;
+    FpiDeviceAction diag_action = fpi_device_get_current_action (dev);
+    const char *diag_kind = "other";
+    if (diag_action == FPI_DEVICE_ACTION_ENROLL)
+      diag_kind = "enroll";
+    else if (diag_action == FPI_DEVICE_ACTION_VERIFY)
+      diag_kind = "verify";
+
+    g_mkdir_with_parents ("/tmp/5e0a-dump", 0700);
+
+    char diag_native[128], diag_scaled[128];
+    g_snprintf (diag_native, sizeof (diag_native),
+                "/tmp/5e0a-dump/cap-%03u-%s-native.pgm", diag_seq, diag_kind);
+    g_snprintf (diag_scaled, sizeof (diag_scaled),
+                "/tmp/5e0a-dump/cap-%03u-%s-scaled.pgm", diag_seq, diag_kind);
+
+    FILE *dnf = fopen (diag_native, "w");
+    if (dnf)
+      {
+        fprintf (dnf, "P2\n64 80\n4095\n");
+        for (guint32 di = 0; di < GOODIX_5E0A_FRAME_SIZE; di++)
+          fprintf (dnf, "%u%c", raw_frame[di], (di + 1) % 64 == 0 ? '\n' : ' ');
+        fclose (dnf);
+        g_chmod (diag_native, 0600);
+      }
+
+    FILE *dsf = fopen (diag_scaled, "wb");
+    if (dsf)
+      {
+        fprintf (dsf, "P5\n128 160\n255\n");
+        for (int di = 0; di < GOODIX_5E0A_SCALED_WIDTH * GOODIX_5E0A_SCALED_HEIGHT; di++)
+          fputc (255 - img->data[di], dsf);
+        fclose (dsf);
+        g_chmod (diag_scaled, 0600);
+      }
+
+    fp_dbg ("[DIAG-5E0A] dumped cap-%03u kind=%s declen=%u minutiae=%u",
+            diag_seq, diag_kind, len, goodix5e0a_count_minutiae (img));
+    diag_seq++;
+  }
+
+  free (raw_frame);
 
   FpiDeviceAction action = fpi_device_get_current_action (dev);
   if (action == FPI_DEVICE_ACTION_ENROLL)
