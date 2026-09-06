@@ -71,8 +71,51 @@ enum activate_states {
   ACTIVATE_READ_OTP,
   ACTIVATE_CHECK_FW_VER,
   ACTIVATE_UPLOAD_CONFIG,
+  ACTIVATE_DIAG_READ_PSK,
   ACTIVATE_NUM_STATES,
 };
+
+/* [DIAG-5E0A] TEMPORARY 0xe4 slot read, diagnosis only, remove before merge.
+ * Compares the device-visible PSK slot against the static host key and logs
+ * the verdict WITHOUT altering activation (always advances). A mismatch here
+ * proves out-of-band device-side reprovisioning (or SRAM key loss) when TLS
+ * later fails with bad-record-mac. Grep DIAG-5E0A to remove. */
+static void
+diag_psk_read_cb (FpDevice *dev, gboolean success, guint32 flags,
+                  guint8 *psk, guint16 length, gpointer user_data,
+                  GError *error)
+{
+  FpiSsm *ssm = user_data;
+
+  if (error)
+    {
+      fp_dbg ("[DIAG-5E0A] psk-slot read failed: %s", error->message);
+      g_error_free (error);
+      fpi_ssm_next_state (ssm);
+      return;
+    }
+
+  if (!success)
+    {
+      fp_dbg ("[DIAG-5E0A] psk-slot read returned success=FALSE");
+      fpi_ssm_next_state (ssm);
+      return;
+    }
+
+  g_autofree gchar *slot_hex = data_to_str (psk, length);
+  g_autofree gchar *host_hex = data_to_str ((guint8 *) goodix_5e0a_psk,
+                                            sizeof (goodix_5e0a_psk));
+
+  if (length == sizeof (goodix_5e0a_psk) &&
+      memcmp (psk, goodix_5e0a_psk, sizeof (goodix_5e0a_psk)) == 0)
+    fp_dbg ("[DIAG-5E0A] psk-slot MATCHES static host key (flags=0x%08x len=%u)",
+            flags, length);
+  else
+    fp_warn ("[DIAG-5E0A] PSK SLOT MISMATCH: flags=0x%08x len=%u slot=0x%s host=0x%s",
+             flags, length, slot_hex, host_hex);
+
+  fpi_ssm_next_state (ssm);
+}
 
 /* No PSK reconciliation: activation goes CHECK_FW_VER -> UPLOAD_CONFIG -> TLS with the static host key (0xe4 slot reports factory bytes, 0xe0 writes rejected). */
 
@@ -106,6 +149,12 @@ activate_run_state (FpiSsm *ssm, FpDevice *dev)
       goodix_send_upload_config_mcu (dev, (guint8 *) goodix_5e0a_config,
                                      sizeof (goodix_5e0a_config), NULL,
                                      goodixtls5xx_check_config_upload, ssm);
+      break;
+
+    case ACTIVATE_DIAG_READ_PSK:
+      goodix_send_preset_psk_read (dev, GOODIX_5E0A_PSK_FLAGS,
+                                   sizeof (goodix_5e0a_psk),
+                                   diag_psk_read_cb, ssm);
       break;
     }
 }
@@ -454,8 +503,10 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
 
   /* [DIAG-5E0A] TEMPORARY offline-capture dump, diagnosis only, remove before merge.
    * Writes native 12-bit PGM + mindtct-input 8-bit PGM per capture to
-   * /tmp/5e0a-dump (mode 0600, biometric data). Never alters the matching
-   * path: dump failures are ignored. Grep DIAG-5E0A to remove. */
+   * /var/lib/fprint/5e0a-dump (NOT /tmp: fprintd runs with PrivateTmp, so
+   * /tmp writes land in an invisible namespace). Mode 0600, biometric data.
+   * Never alters the matching path: dump failures are ignored.
+   * Grep DIAG-5E0A to remove. */
   {
     static guint diag_seq = 0;
     FpiDeviceAction diag_action = fpi_device_get_current_action (dev);
@@ -465,13 +516,13 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
     else if (diag_action == FPI_DEVICE_ACTION_VERIFY)
       diag_kind = "verify";
 
-    g_mkdir_with_parents ("/tmp/5e0a-dump", 0700);
+    g_mkdir_with_parents ("/var/lib/fprint/5e0a-dump", 0700);
 
     char diag_native[128], diag_scaled[128];
     g_snprintf (diag_native, sizeof (diag_native),
-                "/tmp/5e0a-dump/cap-%03u-%s-native.pgm", diag_seq, diag_kind);
+                "/var/lib/fprint/5e0a-dump/cap-%03u-%s-native.pgm", diag_seq, diag_kind);
     g_snprintf (diag_scaled, sizeof (diag_scaled),
-                "/tmp/5e0a-dump/cap-%03u-%s-scaled.pgm", diag_seq, diag_kind);
+                "/var/lib/fprint/5e0a-dump/cap-%03u-%s-scaled.pgm", diag_seq, diag_kind);
 
     FILE *dnf = fopen (diag_native, "w");
     if (dnf)
