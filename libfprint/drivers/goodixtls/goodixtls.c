@@ -178,15 +178,28 @@ goodix_tls_init_serve (void *me)
   int retr = SSL_accept (self->ssl_layer);
 
   fp_dbg ("TLS server accept done");
+  self->accept_ret = retr;
   if (retr <= 0)
     {
       unsigned long err_code;
+      gboolean first = TRUE;
       while ((err_code = ERR_get_error ()) != 0)
         {
+          const char *err_str = ERR_error_string (err_code, NULL);
+          if (first)
+            {
+              g_snprintf (self->accept_err, sizeof (self->accept_err),
+                          "%s (0x%lx)", err_str ? err_str : "unknown error",
+                          err_code);
+              first = FALSE;
+            }
           fp_warn ("5e0a TLS accept failed: %s (0x%lx, cipher: %s)",
-                   ERR_error_string (err_code, NULL), err_code,
+                   err_str, err_code,
                    SSL_get_cipher_name (self->ssl_layer));
         }
+      if (first)
+        g_snprintf (self->accept_err, sizeof (self->accept_err),
+                    "SSL_accept returned %d with no queued error", retr);
     }
   else
     {
@@ -194,6 +207,7 @@ goodix_tls_init_serve (void *me)
               SSL_get_cipher_name (self->ssl_layer),
               SSL_get_version (self->ssl_layer));
     }
+  g_atomic_int_set (&self->accept_done, 1);
   return NULL;
 }
 
@@ -253,6 +267,9 @@ goodix_tls_server_init (GoodixTlsServer *self, GError **error)
   self->serve_thread = 0;
   self->ssl_layer = NULL;
   self->ssl_ctx = NULL;
+  self->accept_done = 0;
+  self->accept_ret = 0;
+  self->accept_err[0] = '\0';
 
   if (self->user_data && fpi_device_emulation_mode_enabled (FP_DEVICE (self->user_data)))
     {

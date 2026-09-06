@@ -44,6 +44,15 @@ typedef struct _GoodixTlsServer
   int       client_fd;
 
   pthread_t serve_thread;
+
+  /* SSL_accept outcome, recorded by the serve thread before it exits.
+   * accept_done is an atomic flag; accept_ret/accept_err are valid once set.
+   * Lets the handshake completion path fail activation loudly instead of
+   * running on a dead session when the device negotiates with a key the
+   * host does not expect (e.g. peer Finished bad-record-mac). */
+  volatile gint accept_done;
+  int           accept_ret;
+  char          accept_err[256];
 } GoodixTlsServer;
 
 /**

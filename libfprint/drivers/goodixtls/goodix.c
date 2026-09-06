@@ -1455,6 +1455,45 @@ on_tls_successfully_established (FpDevice *dev, gpointer user_data,
     dev, priv->tls_ready_callback->user_data, NULL);
   g_clear_pointer (&priv->tls_ready_callback, g_free);
 }
+
+/* Wait briefly for the TLS serve thread to finish SSL_accept, then report
+ * whether the device completed the handshake. In the healthy case accept
+ * returns right after the proxied client Finished, well before the proxy
+ * SSM ends, so this returns immediately; the deadline only bounds genuinely
+ * stuck handshakes. If the outcome is still unknown at the deadline, return
+ * TRUE to preserve the previous behavior (never fail a slow-but-healthy
+ * handshake on a missing signal). */
+static gboolean
+tls_accept_wait_ok (FpDevice *dev)
+{
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
+  if (!priv->tls_hop)
+    return TRUE;
+
+  for (int i = 0;
+       i < 200 && !g_atomic_int_get (&priv->tls_hop->accept_done);
+       i++)
+    g_usleep (10000);
+
+  if (!g_atomic_int_get (&priv->tls_hop->accept_done))
+    {
+      fp_dbg ("TLS accept outcome not ready yet, proceeding");
+      return TRUE;
+    }
+
+  if (priv->tls_hop->accept_ret <= 0)
+    {
+      fp_err ("TLS not accepted by device: %s",
+              priv->tls_hop->accept_err);
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
 static void
 tls_handshake_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
@@ -1473,6 +1512,36 @@ tls_handshake_done (FpiSsm *ssm, FpDevice *dev, GError *error)
         }
       return;
     }
+
+  /* The proxy SSM completing does not prove the openssl server accepted:
+   * check the serve thread outcome before declaring the session live.
+   * Without this, an accept failure (e.g. peer Finished bad-record-mac from
+   * a device key the host does not expect) went unnoticed and activation
+   * proceeded on a dead session, hanging later at FDT with a command
+   * timeout instead of failing here with a clear TLS error. */
+  if (!tls_accept_wait_ok (dev))
+    {
+      GError *accept_error = fpi_device_error_new_msg (
+        FP_DEVICE_ERROR_GENERAL,
+        "TLS handshake failed: device did not complete the handshake "
+        "(likely PSK mismatch; see log for accept error)");
+      fp_err ("%s", accept_error->message);
+      FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+      FpiDeviceGoodixTlsPrivate *priv =
+        fpi_device_goodixtls_get_instance_private (self);
+      if (priv->tls_ready_callback)
+        {
+          ((GoodixNoneCallback) priv->tls_ready_callback->callback)(
+            dev, priv->tls_ready_callback->user_data, accept_error);
+          g_clear_pointer (&priv->tls_ready_callback, g_free);
+        }
+      else
+        {
+          g_error_free (accept_error);
+        }
+      return;
+    }
+
   goodix_send_tls_successfully_established (
     dev, on_tls_successfully_established, NULL);
 }
