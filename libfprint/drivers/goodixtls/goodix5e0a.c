@@ -1349,7 +1349,7 @@ fpi_device_goodixtls5e0a_class_init (FpiDeviceGoodixTls5e0aClass * class)
   img_dev_class->activate = dev_activate;
   img_dev_class->change_state = goodix5e0a_change_state;
   img_dev_class->deactivate = goodix5e0a_deactivate;
-  img_dev_class->bz3_threshold = 10;
+  img_dev_class->bz3_threshold = 11;
   img_dev_class->img_width = GOODIX_5E0A_SCALED_WIDTH;
   img_dev_class->img_height = GOODIX_5E0A_SCALED_HEIGHT;
 
