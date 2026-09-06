@@ -136,12 +136,44 @@ tls_server_config_ctx (SSL_CTX *ctx)
 int
 goodix_tls_client_write (GoodixTlsServer *self, guint8 *data, guint16 length)
 {
-  return write (self->client_fd, data, length * sizeof (guint8));
+  if (!self || self->client_fd < 0)
+    return -1;
+
+  size_t total_written = 0;
+
+  while (total_written < length)
+    {
+      ssize_t ret = write (self->client_fd, data + total_written, length - total_written);
+
+      if (ret < 0)
+        {
+          if (errno == EINTR)
+            continue;
+          return -1;
+        }
+      if (ret == 0)
+        break;
+      total_written += ret;
+    }
+
+  return (int) total_written;
 }
+
 int
 goodix_tls_client_read (GoodixTlsServer *self, guint8 *data, guint16 length)
 {
-  return read (self->client_fd, data, length * sizeof (guint8));
+  if (!self || self->client_fd < 0)
+    return -1;
+
+  ssize_t ret;
+
+  do
+    {
+      ret = read (self->client_fd, data, length * sizeof (guint8));
+    }
+  while (ret < 0 && errno == EINTR);
+
+  return (int) ret;
 }
 
 int
