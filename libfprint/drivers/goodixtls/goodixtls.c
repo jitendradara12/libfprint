@@ -52,7 +52,7 @@ err_from_ssl (void)
                       "SSL error (0x%lx): %s", code, msg ? msg : "unknown SSL error");
 }
 
-#define GOODIX_TLS_CIPHERS "PSK-AES128-CBC-SHA256:ALL:@SECLEVEL=1"
+#define GOODIX_TLS_CIPHERS "PSK-AES128-CBC-SHA256:@SECLEVEL=1"
 
 static unsigned int
 tls_server_psk_server_callback (SSL           *ssl,
@@ -92,18 +92,8 @@ tls_server_psk_server_callback (SSL           *ssl,
                server, server ? server->user_data : NULL);
     }
 
-  const int len = 32;
-
-  fp_warn ("5e0a PSK callback: fallback to zero PSK (len %d, max %d)", len, max_psk_len);
-  if (len > max_psk_len)
-    {
-      fp_err ("max psk length (%d) too short (needs %d)", max_psk_len, len);
-      return 0;
-    }
-
-  memset (psk, 0, len);
-
-  return len;
+  fp_err ("5e0a PSK callback: no valid device PSK available");
+  return 0;
 }
 
 static SSL_CTX *
@@ -126,7 +116,8 @@ tls_server_config_ctx (SSL_CTX *ctx)
 {
   (void) SSL_CTX_set_ecdh_auto (ctx, 1);
   SSL_CTX_set_dh_auto (ctx, 1);
-  SSL_CTX_set_cipher_list (ctx, GOODIX_TLS_CIPHERS);
+  if (SSL_CTX_set_cipher_list (ctx, GOODIX_TLS_CIPHERS) != 1)
+    g_warning ("5e0a TLS: failed to set CTX cipher list '%s'", GOODIX_TLS_CIPHERS);
   SSL_CTX_set_min_proto_version (ctx, TLS1_2_VERSION);
   SSL_CTX_set_max_proto_version (ctx, TLS1_2_VERSION);
   SSL_CTX_set_psk_server_callback (ctx, tls_server_psk_server_callback);
@@ -192,7 +183,8 @@ tls_config_ssl (SSL *ssl)
   SSL_set_min_proto_version (ssl, TLS1_2_VERSION);
   SSL_set_max_proto_version (ssl, TLS1_2_VERSION);
   SSL_set_psk_server_callback (ssl, tls_server_psk_server_callback);
-  SSL_set_cipher_list (ssl, GOODIX_TLS_CIPHERS);
+  if (SSL_set_cipher_list (ssl, GOODIX_TLS_CIPHERS) != 1)
+    g_warning ("5e0a TLS: failed to set SSL cipher list '%s'", GOODIX_TLS_CIPHERS);
 }
 
 static void *
@@ -329,6 +321,26 @@ goodix_tls_server_init (GoodixTlsServer *self, GError **error)
   self->client_fd = socks[1];
 
   self->ssl_layer = SSL_new (self->ssl_ctx);
+  if (!self->ssl_layer)
+    {
+      g_propagate_error (error, err_from_ssl ());
+      if (self->sock_fd >= 0)
+        {
+          close (self->sock_fd);
+          self->sock_fd = -1;
+        }
+      if (self->client_fd >= 0)
+        {
+          close (self->client_fd);
+          self->client_fd = -1;
+        }
+      if (self->ssl_ctx)
+        {
+          SSL_CTX_free (self->ssl_ctx);
+          self->ssl_ctx = NULL;
+        }
+      return FALSE;
+    }
   SSL_set_app_data (self->ssl_layer, self);
   tls_config_ssl (self->ssl_layer);
   SSL_set_fd (self->ssl_layer, self->sock_fd);

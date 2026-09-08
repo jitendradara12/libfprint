@@ -211,10 +211,12 @@ void goodixtls5xx_scan_start (FpiDeviceGoodixTls5xx * dev);
  * @note Doesn't decrypt it
  *
  * @param frame
+ * @param max_pixels
  * @param frame_size
  * @param raw_frame
  */
 void goodixtls5xx_decode_frame (GoodixTls5xxPix * frame,
+                                guint32           max_pixels,
                                 guint32           frame_size,
                                 const guint8     *raw_frame);
 

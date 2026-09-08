@@ -53,6 +53,8 @@ struct _FpiDeviceGoodixTls5e0a
 
   gboolean              session_started;
   FpiSsm               *scan_ssm;
+  guint                 scan_gen;
+  guint                 scan_timeout_gen;
   GSource              *down_timeout;
 
   /* TLS session parking state across deactivate/activate cycles */
@@ -73,6 +75,10 @@ struct _FpiDeviceGoodixTls5e0a
   FpImage              *best_img;
   guint                 best_minutiae;
   guint                 best_frame_no;
+
+  /* Verify retry guard against rapid retry burn on continuous touch */
+  gboolean              retry_guard;
+  gint64                retry_guard_mono;
 };
 
 G_DECLARE_FINAL_TYPE (FpiDeviceGoodixTls5e0a, fpi_device_goodixtls5e0a, FPI,
@@ -112,12 +118,11 @@ activate_run_state (FpiSsm *ssm, FpDevice *dev)
       break;
 
     case ACTIVATE_RESET:
-      if (self->warm_attempted)
-        {
-          fpi_ssm_jump_to_state (ssm, ACTIVATE_CHECK_FW_VER);
-          return;
-        }
-      goodix_send_reset (dev, TRUE, 20, goodixtls5xx_check_reset, ssm);
+      /* In Windows driver captures, sensor AFE reset (CMD 0xa2) is never sent
+       * on activation. Sending CMD 0xa2 on cold boot desynchronizes the MCU
+       * crypto state prior to TLS connection request (0xd0), causing bad record
+       * mac errors during TLS accept. Skip directly to firmware check. */
+      fpi_ssm_jump_to_state (ssm, ACTIVATE_CHECK_FW_VER);
       break;
 
     case ACTIVATE_READ_CHIP_ID:
@@ -514,7 +519,10 @@ goodix5e0a_on_d6_reply (FpDevice *dev, guint8 *data, guint16 len,
     }
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
   self->session_started = TRUE;
-  fpi_ssm_next_state (ssm);
+  if (self->retry_guard)
+    fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_UP_1);
+  else
+    fpi_ssm_next_state (ssm);
 }
 
 static void goodix5e0a_on_fdt_down_reply (FpDevice *dev,
@@ -532,6 +540,8 @@ goodix5e0a_on_down_poll_timeout (FpDevice *dev, gpointer user_data)
 
   FpiSsm *ssm = user_data;
   if (self->scan_ssm != ssm)
+    return;
+  if (self->scan_timeout_gen != self->scan_gen)
     return;
 
   send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_DOWN,
@@ -592,6 +602,7 @@ goodix5e0a_on_fdt_down_reply (FpDevice *dev, guint8 *data, guint16 len,
       g_source_destroy (self->down_timeout);
       self->down_timeout = NULL;
     }
+  self->scan_timeout_gen = self->scan_gen;
   self->down_timeout = fpi_device_add_timeout (dev, 50, goodix5e0a_on_down_poll_timeout, ssm, NULL);
 }
 
@@ -601,11 +612,11 @@ static guint goodix5e0a_count_minutiae (FpImage *img);
 static guint32
 goodix5e0a_decode_frame (GoodixTls5xxPix *out_row_major, const guint8 *data, guint16 len)
 {
-  guint8 packed[GOODIX_5E0A_ACT_BYTES] = {0};
-  guint32 packed_len = 0;
-
-  if (!data)
+  if (!out_row_major || !data)
     return 0;
+
+  g_autofree guint8 *packed = g_new0 (guint8, GOODIX_5E0A_ACT_BYTES);
+  guint32 packed_len = 0;
 
   /* A canonical ChicagoH frame is 80 blocks of 132 bytes followed by a
    * four-byte footer. Each block carries 96 packed pixel bytes and 36 zero
@@ -653,7 +664,8 @@ goodix5e0a_claim_best_frame (FpiDeviceGoodixTls5e0a *self)
 {
   FpImage *best;
 
-  g_return_val_if_fail (self->best_img != NULL, NULL);
+  if (self->best_img == NULL)
+    return NULL;
   best = self->best_img;
   g_message ("5e0a best frame %u/%u: minutiae=%u score-proxy=%u (submitting)",
              self->best_frame_no, (guint) GOODIX_5E0A_FRAMES_PER_TOUCH,
@@ -770,15 +782,15 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
 
   img = process_raw_frame (raw_frame);
 
-  if (img == NULL)
-    {
-      img = fp_image_new (GOODIX_5E0A_SCALED_WIDTH, GOODIX_5E0A_SCALED_HEIGHT);
-      img->flags = FPI_IMAGE_COLORS_INVERTED;
-      img->ppmm = 500.0 / 25.4;
-    }
-
   if (action == FPI_DEVICE_ACTION_ENROLL)
     {
+      if (img == NULL)
+        {
+          fp_dbg ("5e0a enrollment touch rejected: poor frame quality (press firmer)");
+          fpi_image_device_retry_scan (FP_IMAGE_DEVICE (dev), FP_DEVICE_RETRY_TOO_SHORT);
+          fpi_ssm_next_state (ssm);
+          return;
+        }
       guint minutiae_count = goodix5e0a_count_minutiae (img);
       fp_dbg ("5e0a enrollment quality check: minutiae_count=%u (floor=%d)",
               minutiae_count, GOODIX_5E0A_ENROLL_MIN_MINUTIAE);
@@ -798,16 +810,24 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
       if (goodix5e0a_keep_best_frame (dev, ssm, img, len, frame_active, frame_range))
         return;
       img = goodix5e0a_claim_best_frame (self);
+      if (img == NULL)
+        {
+          fpi_image_device_retry_scan (FP_IMAGE_DEVICE (dev), FP_DEVICE_RETRY_TOO_SHORT);
+          goto deliver_done;
+        }
     }
 
 deliver:
   fpi_image_device_image_captured (FP_IMAGE_DEVICE (dev), img);
 
+deliver_done:
   if (action != FPI_DEVICE_ACTION_ENROLL)
     {
       self->scan_ssm = NULL;
-      fpi_ssm_mark_completed (ssm);
+      self->retry_guard = TRUE;
+      self->retry_guard_mono = g_get_monotonic_time ();
       fpi_image_device_report_finger_status (FP_IMAGE_DEVICE (dev), FALSE);
+      fpi_ssm_mark_completed (ssm);
     }
   else
     {
@@ -820,24 +840,27 @@ goodix5e0a_keep_best_frame (FpDevice *dev, gpointer ssm, FpImage *img,
                             guint16 declen, guint active, guint range)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
-  guint minutiae = goodix5e0a_count_minutiae (img);
+  guint minutiae = img ? goodix5e0a_count_minutiae (img) : 0;
 
   self->frame_count++;
   g_message ("5e0a frame %u/%u: declen=%u active=%u range=%u minutiae=%u score-proxy=%u",
              self->frame_count, (guint) GOODIX_5E0A_FRAMES_PER_TOUCH,
              declen, active, range, minutiae, minutiae);
 
-  if (self->best_img == NULL || minutiae > self->best_minutiae)
+  if (img != NULL)
     {
-      if (self->best_img != NULL)
-        g_object_unref (self->best_img);
-      self->best_img = img;
-      self->best_minutiae = minutiae;
-      self->best_frame_no = self->frame_count;
-    }
-  else
-    {
-      g_object_unref (img);
+      if (self->best_img == NULL || minutiae > self->best_minutiae)
+        {
+          if (self->best_img != NULL)
+            g_object_unref (self->best_img);
+          self->best_img = img;
+          self->best_minutiae = minutiae;
+          self->best_frame_no = self->frame_count;
+        }
+      else
+        {
+          g_object_unref (img);
+        }
     }
 
   if (self->frame_count < GOODIX_5E0A_FRAMES_PER_TOUCH)
@@ -864,6 +887,14 @@ goodix5e0a_on_fdt_up_reply (FpDevice *dev, guint8 *data, guint16 len,
       fp_dbg ("5e0a D34 finger release reply: len=%u", len);
     }
 
+  if (self->retry_guard)
+    {
+      self->retry_guard = FALSE;
+      fp_dbg ("5e0a retry guard: release ok, arming FDT DOWN");
+      fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_DOWN);
+      return;
+    }
+
   /* Mark current scan SSM completed before notifying libfprint,
    * so that when libfprint synchronously requests AWAIT_FINGER_ON,
    * the concurrency guard does not block the new scan SSM. */
@@ -888,7 +919,10 @@ goodix5e0a_scan_run_state (FpiSsm *ssm, FpDevice *dev)
     case SCAN_5E0A_SESSION_D6:
       if (self->session_started)
         {
-          fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_DOWN);
+          if (self->retry_guard)
+            fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_UP_1);
+          else
+            fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_DOWN);
           return;
         }
       send_cmd_reply (dev, GOODIX_CMD_SESSION_D6,
@@ -920,8 +954,8 @@ goodix5e0a_scan_run_state (FpiSsm *ssm, FpDevice *dev)
 
     case SCAN_5E0A_FDT_UP_2:
       send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_UP,
-                      goodix_5e0a_up_u01, sizeof (goodix_5e0a_up_u01),
-                      5000, goodix5e0a_on_fdt_up_reply, ssm);
+                        goodix_5e0a_up_u01, sizeof (goodix_5e0a_up_u01),
+                        self->retry_guard ? 2000 : 5000, goodix5e0a_on_fdt_up_reply, ssm);
       break;
     }
 }
@@ -931,6 +965,7 @@ goodix5e0a_scan_complete (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
 
+  self->scan_gen++;
   self->scan_ssm = NULL;
   goodix5e0a_reset_touch_frames (self);
   if (self->down_timeout)
@@ -943,6 +978,7 @@ goodix5e0a_scan_complete (FpiSsm *ssm, FpDevice *dev, GError *error)
     {
       goodix_session_mark_dirty (dev);
       self->warm_ok = FALSE;
+      self->retry_guard = FALSE;
       fp_err ("5e0a failed to scan: %s (code: %d)", error->message, error->code);
       fpi_image_device_session_error (FP_IMAGE_DEVICE (dev), error);
       return;
@@ -961,8 +997,23 @@ goodix5e0a_scan_start (FpDevice *dev)
       return;
     }
 
+  if (self->retry_guard)
+    {
+      gint64 delta_us = g_get_monotonic_time () - self->retry_guard_mono;
+      if (delta_us > 2 * G_USEC_PER_SEC)
+        {
+          fp_dbg ("5e0a retry guard expired (delta=%ld ms), clearing", (long) (delta_us / 1000));
+          self->retry_guard = FALSE;
+        }
+      else
+        {
+          fp_dbg ("5e0a retry guard active (delta=%ld ms): awaiting finger release", (long) (delta_us / 1000));
+        }
+    }
+
   goodix5e0a_reset_touch_frames (self);
 
+  self->scan_gen++;
   self->scan_ssm = fpi_ssm_new (dev, goodix5e0a_scan_run_state, SCAN_5E0A_NUM_STATES);
   fpi_ssm_start (self->scan_ssm, goodix5e0a_scan_complete);
 }
@@ -984,6 +1035,9 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
   goodix_activation_gen_bump (dev);
 
   self->session_started = FALSE;
+  self->scan_gen++;
+  self->retry_guard = FALSE;
+  self->retry_guard_mono = 0;
   if (self->down_timeout)
     {
       g_source_destroy (self->down_timeout);
@@ -1022,6 +1076,8 @@ fpi_device_goodixtls5e0a_init (FpiDeviceGoodixTls5e0a *self)
 {
   self->session_started = FALSE;
   self->scan_ssm = NULL;
+  self->scan_gen = 0;
+  self->scan_timeout_gen = 0;
   self->down_timeout = NULL;
   self->tls_parked = FALSE;
   self->tls_parked_at = 0;
@@ -1036,6 +1092,8 @@ fpi_device_goodixtls5e0a_init (FpiDeviceGoodixTls5e0a *self)
   self->best_img = NULL;
   self->best_minutiae = 0;
   self->best_frame_no = 0;
+  self->retry_guard = FALSE;
+  self->retry_guard_mono = 0;
 }
 
 static double
@@ -1137,7 +1195,7 @@ process_raw_frame (GoodixTls5xxPix * pix)
   /* Remove the slowly varying pressure/offset field before global scaling.
    * A 3x3 local mean is the smallest window that removes this field without
    * averaging across a full ridge period. */
-  float residual[GOODIX_5E0A_FRAME_SIZE];
+  g_autofree float *residual = g_new (float, GOODIX_5E0A_FRAME_SIZE);
   float residual_min = G_MAXFLOAT;
   float residual_max = -G_MAXFLOAT;
   for (int y = 0; y < H; y++)
@@ -1166,7 +1224,7 @@ process_raw_frame (GoodixTls5xxPix * pix)
   if (residual_range < 1.0f)
     return NULL;
 
-  guint8 normalized[GOODIX_5E0A_FRAME_SIZE];
+  g_autofree guint8 *normalized = g_new (guint8, GOODIX_5E0A_FRAME_SIZE);
   for (guint i = 0; i < GOODIX_5E0A_FRAME_SIZE; i++)
     {
       int value = (int) roundf (128.0f + residual[i] * GOODIX_5E0A_CONTRAST_GAIN);
@@ -1275,8 +1333,10 @@ goodix5e0a_suspend (FpDevice *dev)
   self->warm_down_reason = "suspended";
   self->warm_attempted = FALSE;
   goodix5e0a_reset_touch_frames (self);
-
+  self->retry_guard = FALSE;
+  self->retry_guard_mono = 0;
   self->session_started = FALSE;
+  self->scan_gen++;
   if (self->down_timeout)
     {
       g_source_destroy (self->down_timeout);
@@ -1340,7 +1400,7 @@ fpi_device_goodixtls5e0a_class_init (FpiDeviceGoodixTls5e0aClass * class)
   dev_class->full_name = "Goodix TLS Fingerprint Sensor 5e0a";
   dev_class->type = FP_DEVICE_TYPE_USB;
   dev_class->id_table = goodix_5e0a_id_table;
-  dev_class->nr_enroll_stages = 12;
+  dev_class->nr_enroll_stages = 5;
   dev_class->scan_type = FP_SCAN_TYPE_PRESS;
   dev_class->temp_hot_seconds = -1; /* Disable thermal watchdog */
   dev_class->suspend = goodix5e0a_suspend;
@@ -1349,7 +1409,7 @@ fpi_device_goodixtls5e0a_class_init (FpiDeviceGoodixTls5e0aClass * class)
   img_dev_class->activate = dev_activate;
   img_dev_class->change_state = goodix5e0a_change_state;
   img_dev_class->deactivate = goodix5e0a_deactivate;
-  img_dev_class->bz3_threshold = 11;
+  img_dev_class->bz3_threshold = 14;
   img_dev_class->img_width = GOODIX_5E0A_SCALED_WIDTH;
   img_dev_class->img_height = GOODIX_5E0A_SCALED_HEIGHT;
 

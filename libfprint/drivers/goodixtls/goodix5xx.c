@@ -86,8 +86,13 @@ on_calibrate_scan (FpDevice * dev, guint8 * data, guint16 len, gpointer ssm, GEr
   FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
   FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (self);
   if (!priv->calibration_img)
-    priv->calibration_img = calloc (cls->scan_height * cls->scan_width, sizeof (GoodixTls5xxPix));
-  goodixtls5xx_decode_frame (priv->calibration_img, len, data);
+    priv->calibration_img = g_try_new0 (GoodixTls5xxPix, cls->scan_height * cls->scan_width);
+  if (!priv->calibration_img)
+    {
+      fpi_ssm_mark_failed (ssm, fpi_device_error_new (FP_DEVICE_ERROR_GENERAL));
+      return;
+    }
+  goodixtls5xx_decode_frame (priv->calibration_img, cls->scan_height * cls->scan_width, len, data);
 
   fpi_ssm_next_state (ssm);
 }
@@ -358,8 +363,13 @@ scan_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
   FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
   FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
 
-  GoodixTls5xxPix * raw_frame = calloc (cls->scan_width * cls->scan_height, sizeof (GoodixTls5xxPix));
-  goodixtls5xx_decode_frame (raw_frame, len, data);
+  GoodixTls5xxPix * raw_frame = g_try_new0 (GoodixTls5xxPix, cls->scan_width * cls->scan_height);
+  if (!raw_frame)
+    {
+      fpi_ssm_mark_failed (ssm, fpi_device_error_new (FP_DEVICE_ERROR_GENERAL));
+      return;
+    }
+  goodixtls5xx_decode_frame (raw_frame, cls->scan_width * cls->scan_height, len, data);
   if (priv->calibration_img)
     linear_subtract_inplace (raw_frame, priv->calibration_img, cls->scan_width * cls->scan_height);
 
@@ -370,12 +380,18 @@ scan_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
     }
   else if (cls->process_frame)
     {
-      guint8 * squashed = calloc (cls->scan_height * cls->scan_width, 1);
+      guint8 * squashed = g_try_malloc0 (cls->scan_height * cls->scan_width);
+      if (!squashed)
+        {
+          g_free (raw_frame);
+          fpi_ssm_mark_failed (ssm, fpi_device_error_new (FP_DEVICE_ERROR_GENERAL));
+          return;
+        }
       goodixtls5xx_squash_frame_linear (raw_frame, squashed, cls->scan_height * cls->scan_width);
       img = cls->process_frame (squashed);
-      free (squashed);
+      g_free (squashed);
     }
-  free (raw_frame);
+  g_free (raw_frame);
 
   fpi_image_device_image_captured (img_dev, img);
 
@@ -494,11 +510,15 @@ goodixtls5xx_scan_start (FpiDeviceGoodixTls5xx * dev)
 }
 
 void
-goodixtls5xx_decode_frame (GoodixTls5xxPix * frame, guint32 frame_size, const guint8 *raw_frame)
+goodixtls5xx_decode_frame (GoodixTls5xxPix * frame, guint32 max_pixels, guint32 frame_size, const guint8 *raw_frame)
 {
   GoodixTls5xxPix *pix = frame;
   guint32 start = 0;
   guint32 end = (frame_size >= 4) ? (frame_size - 4) : frame_size;
+  guint32 pixel_idx = 0;
+
+  if (!frame || !raw_frame || max_pixels == 0)
+    return;
 
   if (frame_size >= 13 && (frame_size - 13) % 6 == 0)
     {
@@ -506,13 +526,13 @@ goodixtls5xx_decode_frame (GoodixTls5xxPix * frame, guint32 frame_size, const gu
       end = frame_size - 5;
     }
 
-  for (guint32 i = start; i + 6 <= end; i += 6)
+  for (guint32 i = start; i + 6 <= end && pixel_idx + 4 <= max_pixels; i += 6)
     {
       const guint8 *chunk = raw_frame + i;
-      *pix++ = ((chunk[0] & 0xf) << 8) + chunk[1];
-      *pix++ = (chunk[3] << 4) + (chunk[0] >> 4);
-      *pix++ = ((chunk[5] & 0xf) << 8) + chunk[2];
-      *pix++ = (chunk[4] << 4) + (chunk[5] >> 4);
+      pix[pixel_idx++] = ((chunk[0] & 0xf) << 8) + chunk[1];
+      pix[pixel_idx++] = (chunk[3] << 4) + (chunk[0] >> 4);
+      pix[pixel_idx++] = ((chunk[5] & 0xf) << 8) + chunk[2];
+      pix[pixel_idx++] = (chunk[4] << 4) + (chunk[5] >> 4);
     }
 }
 
