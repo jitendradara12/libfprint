@@ -70,6 +70,14 @@ send_switch_mode (FpDevice * dev, gpointer ssm, void (*mode_switch)(FpDevice *,
                                                                     gpointer))
 {
   FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
+  /* No subclass provides get_mcu_cfg without also overriding change_state
+   * (5e0a does), but dereferencing it unguarded would NULL-crash any future
+   * base-scan user — same guard shape as the sibling FDT branches. */
+  if (!cls->get_mcu_cfg)
+    {
+      fpi_ssm_next_state (ssm);
+      return;
+    }
   GoodixTls5xxMcuConfig cfg = cls->get_mcu_cfg ();
 
   mode_switch (dev, cfg.data, cfg.data_len, cfg.free_fn, goodixtls5xx_check_none_cmd, ssm);
@@ -418,6 +426,11 @@ scan_run_state (FpiSsm * ssm, FpDevice * dev)
 
     case SCAN_STAGE_SWITCH_TO_FDT_MODE:
       {
+        if (!cls->get_mcu_cfg)
+          {
+            fpi_ssm_next_state (ssm);
+            break;
+          }
         GoodixTls5xxMcuConfig cfg = cls->get_mcu_cfg ();
         goodix_send_mcu_switch_to_fdt_mode (dev, cfg.data, cfg.data_len, cfg.free_fn, goodixtls5xx_check_none, ssm);
       }

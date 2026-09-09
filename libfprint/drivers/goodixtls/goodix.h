@@ -493,6 +493,25 @@ void goodix_send_preset_psk_read (FpDevice                   *dev,
                                   GoodixPresetPskReadCallback callback,
                                   gpointer                    user_data);
 /**
+ * @brief Read PSK from the device using the 5e0a / Geneva wire framing.
+ *
+ * The 5e0a CMD 0xe4 payload reverses the order compared to CMD 0x06:
+ * length (4B LE) + offset (4B LE) + flags (4B LE) + reserved (4B LE).
+ *
+ * @param dev
+ * @param flags
+ * @param length
+ * @param offset  byte offset into the PSK slot
+ * @param callback
+ * @param user_data
+ */
+void goodix_send_preset_psk_read_5e0a (FpDevice                   *dev,
+                                       guint32                     flags,
+                                       guint32                     length,
+                                       guint32                     offset,
+                                       GoodixPresetPskReadCallback callback,
+                                       gpointer                    user_data);
+/**
  * @brief Request the OTP (One Time Password) from the device
  *
  * @param dev

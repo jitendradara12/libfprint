@@ -100,10 +100,32 @@ enum activate_states {
   ACTIVATE_READ_OTP,
   ACTIVATE_CHECK_FW_VER,
   ACTIVATE_UPLOAD_CONFIG,
+  ACTIVATE_CHECK_PSK,
   ACTIVATE_NUM_STATES,
 };
 
 static void activate_complete (FpiSsm *ssm, FpDevice *dev, GError *error);
+
+/* Read the PSK slot before TLS to latch the MCU crypto state. Best effort:
+ * failure falls through to TLS and surfaces there. */
+static void
+on_psk_hash_read (FpDevice *dev, gboolean success, guint32 flags,
+                  guint8 *psk, guint16 length, gpointer user_data,
+                  GError *error)
+{
+  FpiSsm *ssm = user_data;
+
+  if (error)
+    {
+      fp_warn ("PSK hash read failed: %s", error->message);
+      g_error_free (error);
+    }
+  else
+    {
+      fp_dbg ("PSK hash read: success=%d, len=%u", success, length);
+    }
+  fpi_ssm_next_state (ssm);
+}
 
 static void
 activate_run_state (FpiSsm *ssm, FpDevice *dev)
@@ -153,9 +175,18 @@ activate_run_state (FpiSsm *ssm, FpDevice *dev)
           fpi_ssm_jump_to_state (ssm, ACTIVATE_NUM_STATES);
           return;
         }
-      goodix_send_upload_config_mcu (dev, (guint8 *) goodix_5e0a_config,
-                                     sizeof (goodix_5e0a_config), NULL,
-                                     goodixtls5xx_check_config_upload, ssm);
+      /* Config is uploaded after TLS completes; advance to the PSK read. */
+      fpi_ssm_next_state (ssm);
+      break;
+
+    case ACTIVATE_CHECK_PSK:
+      if (self->warm_attempted)
+        {
+          fpi_ssm_jump_to_state (ssm, ACTIVATE_NUM_STATES);
+          return;
+        }
+      goodix_send_preset_psk_read_5e0a (dev, GOODIX_5E0A_PSK_FLAGS, 32, 0,
+                                        on_psk_hash_read, ssm);
       break;
     }
 }
@@ -283,6 +314,28 @@ on_parked_health_reply (FpDevice *dev, gpointer user_data, GError *error)
 }
 
 static void
+on_post_tls_config_uploaded (FpDevice *dev, gboolean success,
+                             gpointer user_data, GError *error)
+{
+  if (error)
+    {
+      fp_err ("failed to upload config after TLS: %s", error->message);
+      fpi_image_device_activate_complete (FP_IMAGE_DEVICE (dev), error);
+      return;
+    }
+  if (!success)
+    {
+      fp_err ("MCU rejected config upload after TLS");
+      fpi_image_device_activate_complete (
+        FP_IMAGE_DEVICE (dev),
+        g_error_new (FP_DEVICE_ERROR, FP_DEVICE_ERROR_PROTO,
+                     "failed to upload mcu config after TLS"));
+      return;
+    }
+  goodix_send_enable_chip (dev, TRUE, on_chip_enabled, NULL);
+}
+
+static void
 on_tls_activation_complete (FpDevice *dev, gpointer user_data, GError *error)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
@@ -320,8 +373,19 @@ on_tls_activation_complete (FpDevice *dev, gpointer user_data, GError *error)
       return;
     }
 
-  fp_dbg ("TLS connection ready! Enabling chip...");
-  goodix_send_enable_chip (dev, TRUE, on_chip_enabled, NULL);
+  fp_dbg ("TLS connection ready!");
+
+  /* Upload config after TLS on the cold path; warm reuse keeps its config. */
+  if (self->warm_attempted)
+    {
+      goodix_send_enable_chip (dev, TRUE, on_chip_enabled, NULL);
+    }
+  else
+    {
+      goodix_send_upload_config_mcu (dev, (guint8 *) goodix_5e0a_config,
+                                     sizeof (goodix_5e0a_config), NULL,
+                                     on_post_tls_config_uploaded, NULL);
+    }
 }
 
 static void
@@ -667,7 +731,7 @@ goodix5e0a_claim_best_frame (FpiDeviceGoodixTls5e0a *self)
   if (self->best_img == NULL)
     return NULL;
   best = self->best_img;
-  g_message ("5e0a best frame %u/%u: minutiae=%u score-proxy=%u (submitting)",
+  fp_dbg ("5e0a best frame %u/%u: minutiae=%u score-proxy=%u (submitting)",
              self->best_frame_no, (guint) GOODIX_5E0A_FRAMES_PER_TOUCH,
              self->best_minutiae, self->best_minutiae);
   self->best_img = NULL;
@@ -713,7 +777,7 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
   if (action != FPI_DEVICE_ACTION_ENROLL && self->best_img != NULL
       && (data == NULL || len < GOODIX_5E0A_FRAME_WIRE_BYTES))
     {
-      g_message ("5e0a frame %u/%u: short declen=%u, submitting best-so-far %u/%u",
+      fp_dbg ("5e0a frame %u/%u: short declen=%u, submitting best-so-far %u/%u",
                  self->frame_count + 1, (guint) GOODIX_5E0A_FRAMES_PER_TOUCH,
                  len, self->best_frame_no,
                  (guint) GOODIX_5E0A_FRAMES_PER_TOUCH);
@@ -843,7 +907,7 @@ goodix5e0a_keep_best_frame (FpDevice *dev, gpointer ssm, FpImage *img,
   guint minutiae = img ? goodix5e0a_count_minutiae (img) : 0;
 
   self->frame_count++;
-  g_message ("5e0a frame %u/%u: declen=%u active=%u range=%u minutiae=%u score-proxy=%u",
+  fp_dbg ("5e0a frame %u/%u: declen=%u active=%u range=%u minutiae=%u score-proxy=%u",
              self->frame_count, (guint) GOODIX_5E0A_FRAMES_PER_TOUCH,
              declen, active, range, minutiae, minutiae);
 
@@ -877,9 +941,39 @@ goodix5e0a_on_fdt_up_reply (FpDevice *dev, guint8 *data, guint16 len,
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
 
+  if (self->scan_ssm != ssm)
+    {
+      if (err)
+        g_error_free (err);
+      return;
+    }
+
   if (err)
     {
+      if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          fpi_ssm_mark_failed (ssm, err);
+          return;
+        }
       fp_dbg ("5e0a D34 reply (tolerant): %s", err->message);
+      if (self->retry_guard)
+        {
+          /* A timeout here means the finger is still down, not released.
+           * Re-issue while the guard is held; stop after 30s. */
+          if (g_get_monotonic_time () - self->retry_guard_mono > 30 * G_USEC_PER_SEC)
+            {
+              self->retry_guard = FALSE;
+              fp_dbg ("5e0a retry guard: orphaned hold past 30s, failing claim");
+              fpi_ssm_mark_failed (ssm, err);
+              return;
+            }
+          g_error_free (err);
+          fp_dbg ("5e0a retry guard: finger still present, re-issuing FDT UP");
+          send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_UP,
+                          goodix_5e0a_up_u01, sizeof (goodix_5e0a_up_u01),
+                          2000, goodix5e0a_on_fdt_up_reply, ssm);
+          return;
+        }
       g_error_free (err);
     }
   else
@@ -1030,6 +1124,7 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
 {
   FpDevice *dev = FP_DEVICE (img_dev);
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
+  gboolean scan_was_active;
 
   goodix5e0a_reset_touch_frames (self);
   goodix_activation_gen_bump (dev);
@@ -1045,13 +1140,18 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
     }
 
   goodix_reset_state (dev);
+  scan_was_active = (self->scan_ssm != NULL);
   if (self->scan_ssm != NULL)
     {
       fpi_ssm_free (self->scan_ssm);
       self->scan_ssm = NULL;
     }
 
-  if (goodix_tls_is_alive (dev) && self->warm_ok)
+  /* Only park when deactivation arrived idle; a scan torn down mid-flight
+   * can leave dangling replies that poison the next reuse. */
+  if (scan_was_active && goodix_tls_is_alive (dev) && self->warm_ok)
+    fp_dbg ("5e0a park invalidated: scan active at deactivate");
+  if (goodix_tls_is_alive (dev) && self->warm_ok && !scan_was_active)
     {
       goodix_stop_read_loop (dev);
       self->tls_parked = TRUE;
