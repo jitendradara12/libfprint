@@ -21,7 +21,6 @@
 
 #include <errno.h>
 #include <glib.h>
-#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
@@ -170,7 +169,16 @@ int
 goodix_tls_server_read (GoodixTlsServer *self, guint8 *data,
                         guint32 length, GError **error)
 {
-  int retr = SSL_read (self->ssl_layer, data, length * sizeof (guint8));
+  int retr;
+
+  if (!self || !self->ssl_layer)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                   "TLS server not initialised");
+      return -1;
+    }
+
+  retr = SSL_read (self->ssl_layer, data, length * sizeof (guint8));
 
   if (retr <= 0 && error)
     *error = err_from_ssl ();
@@ -230,7 +238,7 @@ goodix_tls_init_serve (void *me)
 }
 
 gboolean
-goodix_tls_server_deinit (GoodixTlsServer *self, GError **error)
+goodix_tls_server_deinit (GoodixTlsServer *self, GError **error G_GNUC_UNUSED)
 {
   if (!self)
     return TRUE;

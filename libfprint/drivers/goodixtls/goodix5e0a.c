@@ -87,6 +87,74 @@ G_DECLARE_FINAL_TYPE (FpiDeviceGoodixTls5e0a, fpi_device_goodixtls5e0a, FPI,
 G_DEFINE_TYPE (FpiDeviceGoodixTls5e0a, fpi_device_goodixtls5e0a,
                FPI_TYPE_DEVICE_GOODIXTLS5XX);
 
+/* Windows capture ground truth tables (APP_10036, goodix-win.pcapng).
+ * File-static: only this TU uses them. */
+#define GOODIX_CMD_SESSION_D6 (0xd6)
+
+/* Static host TLS PSK for TLS_PSK_WITH_AES_128_CBC_SHA256, observed in passive
+ * USB captures of the Windows driver traffic. Activation uses it directly:
+ * the 0xe4-readable slot reports factory bytes (not the TLS key) and 0xe0
+ * writes are rejected, so there is no on-device provisioning. Per-unit scope
+ * of this key is unconfirmed; see PR description. */
+static const guint8 goodix_5e0a_psk[32] = {
+  0xd8, 0x53, 0xad, 0x19, 0x41, 0xb2, 0xdc, 0x53,
+  0x50, 0xc7, 0x66, 0xcd, 0x72, 0x6e, 0xf7, 0xa5,
+  0xdf, 0x7d, 0x5f, 0xa3, 0x90, 0x53, 0xbf, 0xac,
+  0x26, 0x9c, 0xe7, 0x52, 0xd7, 0xa8, 0xb2, 0xab
+};
+
+/* ChicagoH GF3658 DN3 Configuration (256 bytes, wbdi.dll offset 0x197c50, checksum 0x0e53) */
+static const guint8 goodix_5e0a_config[256] = {
+  0xb0, 0x11, 0x60, 0x71, 0x2c, 0x9d, 0x2c, 0xc9, 0x1c, 0xe5, 0x18, 0xfd, 0x00, 0xfd, 0x00, 0xfd,
+  0x03, 0xba, 0x00, 0x01, 0x80, 0xca, 0x00, 0x04, 0x00, 0x84, 0x00, 0x15, 0xb3, 0x86, 0x00, 0x00,
+  0xc4, 0x88, 0x00, 0x00, 0xba, 0x8a, 0x00, 0x00, 0xb2, 0x8c, 0x00, 0x00, 0xaa, 0x8e, 0x00, 0x00,
+  0xc1, 0x90, 0x00, 0xbb, 0xbb, 0x92, 0x00, 0xb1, 0xb1, 0x94, 0x00, 0x00, 0xa8, 0x96, 0x00, 0x00,
+  0xb6, 0x98, 0x00, 0x00, 0x00, 0x9a, 0x00, 0x00, 0x00, 0xd2, 0x00, 0x00, 0x00, 0xd4, 0x00, 0x00,
+  0x00, 0xd6, 0x00, 0x00, 0x00, 0xd8, 0x00, 0x00, 0x00, 0x50, 0x00, 0x01, 0x05, 0xd0, 0x00, 0x00,
+  0x00, 0x70, 0x00, 0x00, 0x00, 0x72, 0x00, 0x78, 0x56, 0x74, 0x00, 0x34, 0x12, 0x20, 0x00, 0x10,
+  0x40, 0x2a, 0x01, 0x02, 0x04, 0x22, 0x00, 0x01, 0x20, 0x24, 0x00, 0x32, 0x00, 0x80, 0x00, 0x01,
+  0x00, 0x5c, 0x00, 0x80, 0x00, 0x56, 0x00, 0x24, 0x20, 0x58, 0x00, 0x03, 0x02, 0x32, 0x00, 0x0c,
+  0x02, 0x66, 0x00, 0x03, 0x00, 0x7c, 0x00, 0x00, 0x58, 0x82, 0x00, 0x80, 0x15, 0x2a, 0x01, 0x82,
+  0x03, 0x22, 0x00, 0x01, 0x20, 0x24, 0x00, 0x14, 0x00, 0x80, 0x00, 0x01, 0x00, 0x5c, 0x00, 0x00,
+  0x01, 0x56, 0x00, 0x04, 0x20, 0x58, 0x00, 0x03, 0x02, 0x32, 0x00, 0x0c, 0x02, 0x66, 0x00, 0x03,
+  0x00, 0x7c, 0x00, 0x00, 0x58, 0x82, 0x00, 0x80, 0x15, 0x2a, 0x01, 0x08, 0x00, 0x5c, 0x00, 0x80,
+  0x00, 0x54, 0x00, 0x10, 0x01, 0x62, 0x00, 0x04, 0x03, 0x64, 0x00, 0x19, 0x00, 0x66, 0x00, 0x03,
+  0x00, 0x7c, 0x00, 0x01, 0x58, 0x2a, 0x01, 0x08, 0x00, 0x5c, 0x00, 0x00, 0x01, 0x52, 0x00, 0x08,
+  0x00, 0x54, 0x00, 0x00, 0x01, 0x66, 0x00, 0x03, 0x00, 0x7c, 0x00, 0x01, 0x58, 0x00, 0x53, 0x0e
+};
+
+/* Session initialization commands */
+static const guint8 goodix_5e0a_query_ae[3]    = {0x00, 0x01, 0x00};
+static const guint8 goodix_5e0a_session_d6[2]  = {0x00, 0x00};
+
+/* Exact 10-byte image capture payload: 05 00 b0 00 b2 00 b0 00 b1 00 (37/37 identical in capture).
+ * Also published to the base class via capture_payload/capture_payload_len. */
+static const guint8 goodix_5e0a_img_payload[10] = {
+  0x05, 0x00, 0xb0, 0x00, 0xb2, 0x00, 0xb0, 0x00, 0xb1, 0x00
+};
+
+/* Exact 35-byte steady-state DOWN table S12 (pkts 302/328/406/432/792):
+ * 1c 01 b0 00 b2 00 b0 00 b1 00 + slots [80 b7 80 ce 80 aa 80 be 80 b1 80 c2] + 00 00 00 00 + b0 00 b2 00 b0 00 b1 00 00 */
+static const guint8 goodix_5e0a_down_s12[35] = {
+  0x1c, 0x01, 0xb0, 0x00, 0xb2, 0x00, 0xb0, 0x00, 0xb1, 0x00,
+  0x80, 0xb7, 0x80, 0xce, 0x80, 0xaa, 0x80, 0xbe, 0x80, 0xb1, 0x80, 0xc2,
+  0x00, 0x00, 0x00, 0x00,
+  0xb0, 0x00, 0xb2, 0x00, 0xb0, 0x00, 0xb1, 0x00, 0x00
+};
+
+/* Exact 35-byte steady-state UP table U01 (pkts 42/50):
+ * 0e 01 b0 00 b2 00 b0 00 b1 00 + slots [80 94 80 c2 80 97 80 b1 80 a5 80 21] + 13 zeros */
+static const guint8 goodix_5e0a_up_u01[35] = {
+  0x0e, 0x01, 0xb0, 0x00, 0xb2, 0x00, 0xb0, 0x00, 0xb1, 0x00,
+  0x80, 0x94, 0x80, 0xc2, 0x80, 0x97, 0x80, 0xb1, 0x80, 0xa5, 0x80, 0x21,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static const FpIdEntry goodix_5e0a_id_table[] = {
+  {.vid = 0x27c6, .pid = 0x5e0a},
+  {.vid = 0, .pid = 0, .driver_data = 0},
+};
+
 static void goodix5e0a_reset_touch_frames (FpiDeviceGoodixTls5e0a *self);
 
 #define GOODIX_5E0A_TLS_PARK_TTL_US (G_USEC_PER_SEC * 30)
@@ -572,6 +640,8 @@ static void
 goodix5e0a_on_d6_reply (FpDevice *dev, guint8 *data, guint16 len,
                         gpointer ssm, GError *err)
 {
+  FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
+
   if (err)
     {
       fp_warn ("5e0a session d6 reply error: %s", err->message);
@@ -581,7 +651,6 @@ goodix5e0a_on_d6_reply (FpDevice *dev, guint8 *data, guint16 len,
     {
       fp_dbg ("5e0a session d6 replied successfully (len=%u)", len);
     }
-  FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
   self->session_started = TRUE;
   if (self->retry_guard)
     fpi_ssm_jump_to_state (ssm, SCAN_5E0A_FDT_UP_1);
@@ -599,10 +668,10 @@ static void
 goodix5e0a_on_down_poll_timeout (FpDevice *dev, gpointer user_data)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
+  FpiSsm *ssm = user_data;
 
   self->down_timeout = NULL;
 
-  FpiSsm *ssm = user_data;
   if (self->scan_ssm != ssm)
     return;
   if (self->scan_timeout_gen != self->scan_gen)
@@ -618,6 +687,10 @@ goodix5e0a_on_fdt_down_reply (FpDevice *dev, guint8 *data, guint16 len,
                               gpointer ssm, GError *err)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
+  guint8 status;
+  GString *hex_str;
+  guint32 channel_energy = 0;
+  gboolean touch;
 
   if (err)
     {
@@ -630,21 +703,20 @@ goodix5e0a_on_fdt_down_reply (FpDevice *dev, guint8 *data, guint16 len,
       return;
     }
 
-  guint8 status = (len > 0) ? data[0] : 0x00;
+  status = (len > 0) ? data[0] : 0x00;
 
-  GString *hex_str = g_string_new ("");
+  hex_str = g_string_new ("");
   for (guint16 i = 0; i < len; i++)
     g_string_append_printf (hex_str, "%02x ", data[i]);
   fp_dbg ("5e0a D32 reply: status=0x%02x len=%u bytes=[%s]", status, len, hex_str->str);
   g_string_free (hex_str, TRUE);
 
-  guint32 channel_energy = 0;
   if (len >= 4)
     for (guint16 i = 4; i + 1 < len; i += 2)
       channel_energy += (guint32) data[i] | ((guint32) data[i + 1] << 8);
 
   /* Gating rule: touch = channel-byte energy (data[2] != 0xff and channel_energy > 0), never byte0 */
-  gboolean touch = (len >= 4 && data[2] != 0xff && channel_energy > 0);
+  touch = (len >= 4 && data[2] != 0xff && channel_energy > 0);
 
   if (touch)
     {
@@ -676,11 +748,14 @@ static guint goodix5e0a_count_minutiae (FpImage *img);
 static guint32
 goodix5e0a_decode_frame (GoodixTls5xxPix *out_row_major, const guint8 *data, guint16 len)
 {
+  g_autofree guint8 *packed = NULL;
+  guint32 packed_len = 0;
+  guint32 pixel_idx = 0;
+
   if (!out_row_major || !data)
     return 0;
 
-  g_autofree guint8 *packed = g_new0 (guint8, GOODIX_5E0A_ACT_BYTES);
-  guint32 packed_len = 0;
+  packed = g_new0 (guint8, GOODIX_5E0A_ACT_BYTES);
 
   /* A canonical ChicagoH frame is 80 blocks of 132 bytes followed by a
    * four-byte footer. Each block carries 96 packed pixel bytes and 36 zero
@@ -697,7 +772,6 @@ goodix5e0a_decode_frame (GoodixTls5xxPix *out_row_major, const guint8 *data, gui
       packed_len += GOODIX_5E0A_BLOCK_ACTIVE_BYTES;
     }
 
-  guint32 pixel_idx = 0;
   for (guint32 i = 0; i + 6 <= packed_len && pixel_idx + 4 <= GOODIX_5E0A_FRAME_SIZE; i += 6)
     {
       const guint8 *c = packed + i;
@@ -752,6 +826,13 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
   FpiDeviceAction action = fpi_device_get_current_action (dev);
   g_autofree GoodixTls5xxPix *raw_frame = NULL;
   FpImage *img;
+  guint32 padding_nonzero = 0;
+  guint32 decoded_pixels = 0;
+  guint total_nonzero = 0;
+  guint16 raw_min = 65535, raw_max = 0;
+  guint frame_active = 0;
+  guint16 frame_min = 65535, frame_max = 0;
+  guint frame_range = 0;
 
   if (self->scan_ssm != ssm)
     {
@@ -794,7 +875,6 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
               data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]);
     }
 
-  guint32 padding_nonzero = 0;
   if (data)
     {
       for (guint32 block = 0; block < GOODIX_5E0A_FRAME_BLOCKS; block++)
@@ -808,12 +888,8 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
     }
 
   raw_frame = g_new0 (GoodixTls5xxPix, GOODIX_5E0A_FRAME_SIZE);
-  guint32 decoded_pixels = goodix5e0a_decode_frame (raw_frame, data, len);
+  decoded_pixels = goodix5e0a_decode_frame (raw_frame, data, len);
 
-  guint total_nonzero = 0;
-  guint16 raw_min = 65535, raw_max = 0;
-  guint frame_active = 0;
-  guint16 frame_min = 65535, frame_max = 0;
   for (guint32 i = 0; i < GOODIX_5E0A_FRAME_SIZE; i++)
     {
       if (raw_frame[i] > 0)
@@ -833,8 +909,8 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
             frame_max = raw_frame[i];
         }
     }
-  guint frame_range = (frame_min != 65535 && frame_max > frame_min)
-                      ? (guint) (frame_max - frame_min) : 0;
+  frame_range = (frame_min != 65535 && frame_max > frame_min)
+                ? (guint) (frame_max - frame_min) : 0;
   fp_dbg ("5e0a wire layout: decoded_px=%u blocks=%u active_bytes=%u padding_nonzero=%u footer_bytes=%u",
           decoded_pixels, MIN ((guint32) len / GOODIX_5E0A_BLOCK_BYTES,
                                (guint32) GOODIX_5E0A_FRAME_BLOCKS),
@@ -848,6 +924,8 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
 
   if (action == FPI_DEVICE_ACTION_ENROLL)
     {
+      guint minutiae_count;
+
       if (img == NULL)
         {
           fp_dbg ("5e0a enrollment touch rejected: poor frame quality (press firmer)");
@@ -855,7 +933,7 @@ goodix5e0a_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
           fpi_ssm_next_state (ssm);
           return;
         }
-      guint minutiae_count = goodix5e0a_count_minutiae (img);
+      minutiae_count = goodix5e0a_count_minutiae (img);
       fp_dbg ("5e0a enrollment quality check: minutiae_count=%u (floor=%d)",
               minutiae_count, GOODIX_5E0A_ENROLL_MIN_MINUTIAE);
       if (minutiae_count < GOODIX_5E0A_ENROLL_MIN_MINUTIAE)
@@ -1125,6 +1203,7 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
   FpDevice *dev = FP_DEVICE (img_dev);
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
   gboolean scan_was_active;
+  g_autoptr(GError) tls_err = NULL;
 
   goodix5e0a_reset_touch_frames (self);
   goodix_activation_gen_bump (dev);
@@ -1165,7 +1244,6 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
 
   self->tls_parked = FALSE;
   goodix_session_mark_dirty (dev);
-  g_autoptr(GError) tls_err = NULL;
   goodix_shutdown_tls (dev, &tls_err);
   goodix_stop_read_loop (dev);
   fpi_image_device_deactivate_complete (img_dev, g_steal_pointer (&tls_err));
@@ -1205,6 +1283,9 @@ goodix5e0a_axis_correlation (const GoodixTls5xxPix *pix,
 {
   double sum_a = 0.0, sum_b = 0.0;
   guint count = 0;
+  double mean_a, mean_b;
+  double covariance = 0.0, variance_a = 0.0, variance_b = 0.0;
+  double denominator;
 
   for (int y = 0; y + dy < height; y++)
     for (int x = 0; x + dx < width; x++)
@@ -1217,9 +1298,8 @@ goodix5e0a_axis_correlation (const GoodixTls5xxPix *pix,
   if (count == 0)
     return 0.0;
 
-  double mean_a = sum_a / count;
-  double mean_b = sum_b / count;
-  double covariance = 0.0, variance_a = 0.0, variance_b = 0.0;
+  mean_a = sum_a / count;
+  mean_b = sum_b / count;
 
   for (int y = 0; y + dy < height; y++)
     for (int x = 0; x + dx < width; x++)
@@ -1231,7 +1311,7 @@ goodix5e0a_axis_correlation (const GoodixTls5xxPix *pix,
         variance_b += b * b;
       }
 
-  double denominator = sqrt (variance_a * variance_b);
+  denominator = sqrt (variance_a * variance_b);
   return denominator > 1e-6 ? covariance / denominator : 0.0;
 }
 
@@ -1245,6 +1325,15 @@ process_raw_frame (GoodixTls5xxPix * pix)
 
   guint16 min_v = 65535, max_v = 0;
   guint active = 0;
+  guint16 range = 0;
+  double horizontal_corr = 0.0, vertical_corr = 0.0, horizontal_lag4_corr = 0.0;
+  GString *active_cols = NULL;
+  g_autofree float *residual = NULL;
+  float residual_min = G_MAXFLOAT;
+  float residual_max = -G_MAXFLOAT;
+  float residual_range = 0.0f;
+  g_autofree guint8 *normalized = NULL;
+  FpImage *scaled = NULL;
 
   for (int r = 0; r < H; ++r)
     {
@@ -1264,13 +1353,13 @@ process_raw_frame (GoodixTls5xxPix * pix)
 
   if (min_v == 65535)
     min_v = 0;
-  guint16 range = (max_v > min_v) ? (max_v - min_v) : 1;
+  range = (max_v > min_v) ? (max_v - min_v) : 1;
 
-  double horizontal_corr = goodix5e0a_axis_correlation (pix, W, H, 1, 0);
-  double vertical_corr = goodix5e0a_axis_correlation (pix, W, H, 0, 1);
-  double horizontal_lag4_corr = goodix5e0a_axis_correlation (pix, W, H, 4, 0);
+  horizontal_corr = goodix5e0a_axis_correlation (pix, W, H, 1, 0);
+  vertical_corr = goodix5e0a_axis_correlation (pix, W, H, 0, 1);
+  horizontal_lag4_corr = goodix5e0a_axis_correlation (pix, W, H, 4, 0);
 
-  GString *active_cols = g_string_new ("");
+  active_cols = g_string_new ("");
   for (int c = 0; c < W; ++c)
     {
       guint32 c_sum = 0;
@@ -1295,15 +1384,14 @@ process_raw_frame (GoodixTls5xxPix * pix)
   /* Remove the slowly varying pressure/offset field before global scaling.
    * A 3x3 local mean is the smallest window that removes this field without
    * averaging across a full ridge period. */
-  g_autofree float *residual = g_new (float, GOODIX_5E0A_FRAME_SIZE);
-  float residual_min = G_MAXFLOAT;
-  float residual_max = -G_MAXFLOAT;
+  residual = g_new (float, GOODIX_5E0A_FRAME_SIZE);
   for (int y = 0; y < H; y++)
     {
       for (int x = 0; x < W; x++)
         {
           guint32 local_sum = 0;
           guint local_count = 0;
+          float value;
           for (int yy = MAX (0, y - 1); yy <= MIN (H - 1, y + 1); yy++)
             for (int xx = MAX (0, x - 1); xx <= MIN (W - 1, x + 1); xx++)
               {
@@ -1311,20 +1399,20 @@ process_raw_frame (GoodixTls5xxPix * pix)
                 local_count++;
               }
 
-          float value = pix[y * W + x] - (float) local_sum / local_count;
+          value = pix[y * W + x] - (float) local_sum / local_count;
           residual[y * W + x] = value;
           residual_min = MIN (residual_min, value);
           residual_max = MAX (residual_max, value);
         }
     }
 
-  float residual_range = residual_max - residual_min;
+  residual_range = residual_max - residual_min;
   fp_dbg ("5e0a local contrast: min=%.2f max=%.2f range=%.2f window=3x3 gain=%.2f",
           residual_min, residual_max, residual_range, GOODIX_5E0A_CONTRAST_GAIN);
   if (residual_range < 1.0f)
     return NULL;
 
-  g_autofree guint8 *normalized = g_new (guint8, GOODIX_5E0A_FRAME_SIZE);
+  normalized = g_new (guint8, GOODIX_5E0A_FRAME_SIZE);
   for (guint i = 0; i < GOODIX_5E0A_FRAME_SIZE; i++)
     {
       int value = (int) roundf (128.0f + residual[i] * GOODIX_5E0A_CONTRAST_GAIN);
@@ -1334,32 +1422,39 @@ process_raw_frame (GoodixTls5xxPix * pix)
   /* Create the scaled 128x160 image directly via bilinear upscaling.
    * Use FPI_IMAGE_COLORS_INVERTED for capacitive ridges (high ADC = black).
    * Omit FPI_IMAGE_PARTIAL so remove_perimeter_pts=0 retains edge minutiae. */
-  FpImage *scaled = fp_image_new (dst_w, dst_h);
+  scaled = fp_image_new (dst_w, dst_h);
   scaled->flags = FPI_IMAGE_COLORS_INVERTED;
   scaled->ppmm = 500.0 / 25.4;
 
   for (int y = 0; y < dst_h; y++)
     {
       float src_y = (y + 0.5f) * 0.5f - 0.5f;
+      int y0, y1;
+      float y_frac;
+
       if (src_y < 0.0f)
         src_y = 0.0f;
-      int y0 = (int) src_y;
-      int y1 = (y0 + 1 < H) ? y0 + 1 : y0;
-      float y_frac = src_y - (float) y0;
+      y0 = (int) src_y;
+      y1 = (y0 + 1 < H) ? y0 + 1 : y0;
+      y_frac = src_y - (float) y0;
 
       for (int x = 0; x < dst_w; x++)
         {
           float src_x = (x + 0.5f) * 0.5f - 0.5f;
+          int x0, x1;
+          float x_frac, top, bot, val;
+          int norm;
+
           if (src_x < 0.0f)
             src_x = 0.0f;
-          int x0 = (int) src_x;
-          int x1 = (x0 + 1 < W) ? x0 + 1 : x0;
-          float x_frac = src_x - (float) x0;
+          x0 = (int) src_x;
+          x1 = (x0 + 1 < W) ? x0 + 1 : x0;
+          x_frac = src_x - (float) x0;
 
-          float top = (float) normalized[y0 * W + x0] * (1.0f - x_frac) + (float) normalized[y0 * W + x1] * x_frac;
-          float bot = (float) normalized[y1 * W + x0] * (1.0f - x_frac) + (float) normalized[y1 * W + x1] * x_frac;
-          float val = top * (1.0f - y_frac) + bot * y_frac;
-          int norm = (int) roundf (val);
+          top = (float) normalized[y0 * W + x0] * (1.0f - x_frac) + (float) normalized[y0 * W + x1] * x_frac;
+          bot = (float) normalized[y1 * W + x0] * (1.0f - x_frac) + (float) normalized[y1 * W + x1] * x_frac;
+          val = top * (1.0f - y_frac) + bot * y_frac;
+          norm = (int) roundf (val);
           scaled->data[y * dst_w + x] = (guint8) CLAMP (norm, 0, 255);
         }
     }
@@ -1372,30 +1467,35 @@ process_raw_frame (GoodixTls5xxPix * pix)
 static guint
 goodix5e0a_count_minutiae (FpImage *img)
 {
+  int w, h;
+  unsigned char *buf;
+  LFSPARMS parms = g_lfsparms_V2;
+  double ppmm;
+  MINUTIAE *minutiae = NULL;
+  int *qmap = NULL, *dmap = NULL, *lcmap = NULL, *lfmap = NULL, *hcmap = NULL;
+  int mw, mh, bw, bh, bd;
+  unsigned char *bdata = NULL;
+  int ret;
+  guint count;
+
   if (!img || !img->data)
     return 0;
 
-  int w = img->width;
-  int h = img->height;
-  unsigned char *buf = g_memdup2 (img->data, w * h);
+  w = img->width;
+  h = img->height;
+  buf = g_memdup2 (img->data, w * h);
 
   if (img->flags & FPI_IMAGE_COLORS_INVERTED)
     for (int i = 0; i < w * h; i++)
       buf[i] = 255 - buf[i];
 
-  LFSPARMS parms = g_lfsparms_V2;
   parms.remove_perimeter_pts = 0;
-  double ppmm = img->ppmm > 0 ? img->ppmm : (500.0 / 25.4);
+  ppmm = img->ppmm > 0 ? img->ppmm : (500.0 / 25.4);
 
-  MINUTIAE *minutiae = NULL;
-  int *qmap = NULL, *dmap = NULL, *lcmap = NULL, *lfmap = NULL, *hcmap = NULL;
-  int mw, mh, bw, bh, bd;
-  unsigned char *bdata = NULL;
-
-  int ret = get_minutiae (&minutiae, &qmap, &dmap, &lcmap, &lfmap, &hcmap,
-                          &mw, &mh, &bdata, &bw, &bh, &bd,
-                          buf, w, h, 8, ppmm, &parms);
-  guint count = (ret == 0 && minutiae) ? minutiae->num : 0;
+  ret = get_minutiae (&minutiae, &qmap, &dmap, &lcmap, &lfmap, &hcmap,
+                      &mw, &mh, &bdata, &bw, &bh, &bd,
+                      buf, w, h, 8, ppmm, &parms);
+  count = (ret == 0 && minutiae) ? minutiae->num : 0;
 
   g_free (buf);
   if (minutiae)
@@ -1416,11 +1516,12 @@ goodix5e0a_count_minutiae (FpImage *img)
   return count;
 }
 
-void
+static void
 goodix5e0a_suspend (FpDevice *dev)
 {
   FpiDeviceGoodixTls5e0a *self = FPI_DEVICE_GOODIXTLS5E0A (dev);
   FpiDeviceAction action = fpi_device_get_current_action (dev);
+  g_autoptr(GError) tls_err = NULL;
 
   fp_dbg ("5e0a suspend requested during action: %d", action);
 
@@ -1456,15 +1557,22 @@ goodix5e0a_suspend (FpDevice *dev)
   /* Terminate background read loop and cancel transfers */
   goodix_stop_read_loop (dev);
 
-  /* Tear down TLS context */
-  goodix_shutdown_tls (dev, NULL);
+  /* Tear down TLS context. Synchronous (joins the serve thread); log but
+   * do not propagate failures so the NOT_SUPPORTED suspend completion below
+   * still triggers clean core deactivation. */
+  if (!goodix_shutdown_tls (dev, &tls_err))
+    {
+      fp_warn ("5e0a suspend: TLS shutdown failed: %s",
+               tls_err ? tls_err->message : "unknown error");
+      g_clear_error (&tls_err);
+    }
 
   /* Complete suspend with NOT_SUPPORTED to trigger clean core deactivation
    * of the interactive task, releasing PAM claims before sleep. */
   fpi_device_suspend_complete (dev, fpi_device_error_new (FP_DEVICE_ERROR_NOT_SUPPORTED));
 }
 
-void
+static void
 goodix5e0a_resume (FpDevice *dev)
 {
   fp_dbg ("5e0a resume requested");
@@ -1495,6 +1603,8 @@ fpi_device_goodixtls5e0a_class_init (FpiDeviceGoodixTls5e0aClass * class)
   gx_class->interface = GOODIX_5E0A_INTERFACE;
   gx_class->ep_in = GOODIX_5E0A_EP_IN;
   gx_class->ep_out = GOODIX_5E0A_EP_OUT;
+  gx_class->capture_payload = goodix_5e0a_img_payload;
+  gx_class->capture_payload_len = sizeof (goodix_5e0a_img_payload);
 
   dev_class->id = "goodixtls5e0a";
   dev_class->full_name = "Goodix TLS Fingerprint Sensor 5e0a";

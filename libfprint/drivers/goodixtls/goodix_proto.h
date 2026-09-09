@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <glib.h>
+
 #define GOODIX_EP_IN_MAX_BUF_SIZE (0x10000)
 #define GOODIX_EP_OUT_MAX_BUF_SIZE (0x40)
 
@@ -141,9 +143,6 @@ typedef struct __attribute__((__packed__)) _GoodixNone
 {
   guint16 : 16;
 } GoodixNone;
-
-guint8 goodix_calc_checksum (guint8 *data,
-                             guint16 length);
 
 void goodix_encode_pack (guint8   flags,
                          guint8  *payload,

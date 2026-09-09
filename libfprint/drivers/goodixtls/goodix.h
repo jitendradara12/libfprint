@@ -23,7 +23,7 @@
 
 #include "drivers_api.h"
 
-/* 1 second USB timeout */
+/* 1 second USB timeout, applied per USB chunk in goodix_send_data */
 #define GOODIX_TIMEOUT (1000)
 
 /* NOP is a flush operation where silence from the MCU is expected. */
@@ -41,9 +41,15 @@ struct _FpiDeviceGoodixTlsClass
   gint               interface;
   guint8             ep_in;
   guint8             ep_out;
+
+  /* MCU_GET_IMAGE capture payload override. NULL/0 selects the generic
+   * GoodixDefault payload; subclasses with device-specific capture bytes
+   * (e.g. 5e0a) set both fields in class_init. */
+  const guint8      *capture_payload;
+  guint16            capture_payload_len;
 };
 
-typedef struct __attribute__((__packed__)) _GoodixCallbackInfo
+typedef struct _GoodixCallbackInfo
 {
   GCallback callback;
   gpointer user_data;
@@ -106,82 +112,17 @@ gchar *data_to_str (guint8 *data,
  * @{
  *
  */
-void goodix_receive_done (FpDevice *dev,
-                          guint8   *data,
-                          guint16   length,
-                          GError   *error);
-
-void goodix_receive_success (FpDevice *dev,
-                             guint8   *data,
-                             guint16   length,
-                             gpointer  user_data,
-                             GError   *error);
-
-void goodix_receive_reset (FpDevice *dev,
-                           guint8   *data,
-                           guint16   length,
-                           gpointer  user_data,
-                           GError   *error);
-
 void goodix_receive_none (FpDevice *dev,
                           guint8   *data,
                           guint16   length,
                           gpointer  user_data,
                           GError   *error);
 
-void goodix_receive_none_tolerant (FpDevice *dev,
-                                   guint8   *data,
-                                   guint16   length,
-                                   gpointer  user_data,
-                                   GError   *error);
-
 void goodix_receive_default (FpDevice *dev,
                              guint8   *data,
                              guint16   length,
                              gpointer  user_data,
                              GError   *error);
-
-void goodix_receive_preset_psk_read (FpDevice *dev,
-                                     guint8   *data,
-                                     guint16   length,
-                                     gpointer  user_data,
-                                     GError   *error);
-
-void goodix_receive_preset_psk_write (FpDevice *dev,
-                                      guint8   *data,
-                                      guint16   length,
-                                      gpointer  user_data,
-                                      GError   *error);
-
-void goodix_receive_ack (FpDevice *dev,
-                         guint8   *data,
-                         guint16   length,
-                         gpointer  user_data,
-                         GError   *error);
-
-void goodix_receive_firmware_version (FpDevice *dev,
-                                      guint8   *data,
-                                      guint16   length,
-                                      gpointer  user_data,
-                                      GError   *error);
-
-void goodix_receive_protocol (FpDevice *dev,
-                              guint8   *data,
-                              guint32   length);
-
-void goodix_receive_pack (FpDevice *dev,
-                          guint8   *data,
-                          guint32   length);
-
-void goodix_receive_data_cb (FpiUsbTransfer *transfer,
-                             FpDevice       *dev,
-                             gpointer        user_data,
-                             GError         *error);
-
-void goodix_receive_timeout_cb (FpDevice *dev,
-                                gpointer  user_data);
-
-void goodix_receive_data (FpDevice *dev);
 
 /** @} */
 
@@ -192,42 +133,6 @@ void goodix_receive_data (FpDevice *dev);
  */
 void goodix_start_read_loop (FpDevice *dev);
 void goodix_stop_read_loop (FpDevice *dev);
-
-/**
- * @brief Send raw data to the device over USB
- * @note You should never need to call this directly from your driver!
- *
- * @param dev
- * @param data data to be sent
- * @param length length of the data
- * @param free_func free function for the data or NULL
- * @param error error output
- * @return gboolean TRUE if successful, FALSE otherwise
- */
-gboolean goodix_send_data (FpDevice      *dev,
-                           guint8        *data,
-                           guint32        length,
-                           GDestroyNotify free_func,
-                           GError       **error);
-
-/**
- * @brief Send a single packet to the device
- * @note You should never need to call this directly from your driver!
- *
- * @param dev
- * @param flags
- * @param payload
- * @param length
- * @param free_func
- * @param error
- * @return gboolean
- */
-gboolean goodix_send_pack (FpDevice      *dev,
-                           guint8         flags,
-                           guint8        *payload,
-                           guint16        length,
-                           GDestroyNotify free_func,
-                           GError       **error);
 
 /**
  * @brief Low level function to send a protocol message to the device
@@ -265,18 +170,6 @@ void goodix_send_protocol (FpDevice         *dev,
 void goodix_send_nop (FpDevice          *dev,
                       GoodixNoneCallback callback,
                       gpointer           user_data);
-
-/**
- * @brief Tell the device we want an image from it. The response will be TLS encrypted so you probably don't
- * want to call this from your driver, checkout goodix_tls_read_image() if you want an image from the device
- *
- * @param dev
- * @param callback
- * @param user_data
- */
-void goodix_send_mcu_get_image (FpDevice           *dev,
-                                GoodixImageCallback callback,
-                                gpointer            user_data);
 
 /**
  * @brief Tell the device we want to wait for the user to present their finger
@@ -331,17 +224,6 @@ void goodix_send_nav_0 (FpDevice             *dev,
                         GoodixDefaultCallback callback,
                         gpointer              user_data);
 
-void goodix_send_mcu_switch_to_idle_mode (FpDevice          *dev,
-                                          guint8             sleep_time,
-                                          GoodixNoneCallback callback,
-                                          gpointer           user_data);
-
-void goodix_send_write_sensor_register (FpDevice          *dev,
-                                        guint16            address,
-                                        guint16            value,
-                                        GoodixNoneCallback callback,
-                                        gpointer           user_data);
-
 void goodix_send_read_sensor_register (FpDevice             *dev,
                                        guint16               address,
                                        guint8                length,
@@ -365,11 +247,6 @@ void goodix_send_upload_config_mcu (FpDevice             *dev,
                                     GoodixSuccessCallback callback,
                                     gpointer              user_data);
 
-void goodix_send_set_powerdown_scan_frequency (FpDevice             *dev,
-                                               guint16               powerdown_scan_frequency,
-                                               GoodixSuccessCallback callback,
-                                               gpointer              user_data);
-
 /**
  * @brief Turn the chip on
  *
@@ -382,21 +259,6 @@ void goodix_send_enable_chip (FpDevice          *dev,
                               gboolean           enable,
                               GoodixNoneCallback callback,
                               gpointer           user_data);
-
-/**
- * @brief Send a reset command to the device
- *
- * @param dev
- * @param reset_sensor
- * @param sleep_time
- * @param callback
- * @param user_data
- */
-void goodix_send_reset (FpDevice           *dev,
-                        gboolean            reset_sensor,
-                        guint8              sleep_time,
-                        GoodixResetCallback callback,
-                        gpointer            user_data);
 
 /**
  * @brief Ask the device what firmware version it is running. Response is null-terminated string
@@ -419,64 +281,6 @@ void goodix_send_query_firmware_version (FpDevice                     *dev,
 void goodix_send_query_mcu_state (FpDevice          *dev,
                                   GoodixNoneCallback callback,
                                   gpointer           user_data);
-
-/**
- * @brief Tell the device we want to start talking TLS
- * @note You probably don't need to call this from your driver directly, checkout the goodix_tls_* functions
- *
- * @param dev
- * @param callback
- * @param user_data
- */
-void goodix_send_request_tls_connection (FpDevice             *dev,
-                                         GoodixDefaultCallback callback,
-                                         gpointer              user_data);
-
-/**
- * @brief Tell the device that we have successfully established TLS communication with it
- * @note You probably don't need to call this from your driver directly, checkout the goodix_tls_* functions
- *
- * @param dev
- * @param callback
- * @param user_data
- */
-void goodix_send_tls_successfully_established (FpDevice          *dev,
-                                               GoodixNoneCallback callback,
-                                               gpointer           user_data);
-
-void goodix_send_set_drv_state (FpDevice          *dev,
-                                GoodixNoneCallback cb,
-                                gpointer           ud);
-
-void goodix_send_mcu_get_pov_image (FpDevice             *dev,
-                                    GoodixDefaultCallback cb,
-                                    gpointer              ud);
-
-void goodix_send_set_pov_config (FpDevice          *dev,
-                                 const guint8      *cfg,
-                                 guint16            len,
-                                 GDestroyNotify     ff,
-                                 GoodixNoneCallback cb,
-                                 gpointer           ud);
-
-/**
- * @brief Set the device preset psk. May not work for all device firmware versions
- *
- * @param dev
- * @param flags
- * @param psk
- * @param length
- * @param free_func
- * @param callback
- * @param user_data
- */
-void goodix_send_preset_psk_write (FpDevice             *dev,
-                                   guint32               flags,
-                                   guint8               *psk,
-                                   guint16               length,
-                                   GDestroyNotify        free_func,
-                                   GoodixSuccessCallback callback,
-                                   gpointer              user_data);
 
 /**
  * @brief Ask the device what preset psk it has
@@ -582,18 +386,6 @@ guint goodix_boot_seq_get (FpDevice *dev);
 void goodix_session_mark_clean (FpDevice *dev);
 void goodix_session_mark_dirty (FpDevice *dev);
 gboolean goodix_session_is_clean (FpDevice *dev);
-
-/**
- * @brief Read a TLS packet from the device
- * @note You probably won't ever need to call this directly from your driver
- *
- * @param dev
- * @param callback
- * @param user_data
- */
-void goodix_read_tls (FpDevice         *dev,
-                      GoodixTlsCallback callback,
-                      gpointer          user_data);
 
 /**
  * @brief Initialise TLS with the device. Performs handshaking and such for you

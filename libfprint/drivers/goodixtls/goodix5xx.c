@@ -61,38 +61,47 @@ enum SCAN_STAGES {
 };
 
 
+/* Base class provides no default MCU config; 5e0a overrides change_state
+ * so this guard only covers direct base-class scans. */
+static gboolean
+get_mcu_cfg_or_skip (FpDevice *dev, FpiSsm *ssm, GoodixTls5xxMcuConfig *cfg)
+{
+  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
+  if (!cls->get_mcu_cfg)
+    {
+      fpi_ssm_next_state (ssm);
+      return FALSE;
+    }
+  *cfg = cls->get_mcu_cfg ();
+  return TRUE;
+}
+
 static void
-send_switch_mode (FpDevice * dev, gpointer ssm, void (*mode_switch)(FpDevice *,
+send_switch_mode (FpDevice * dev, FpiSsm * ssm, void (*mode_switch)(FpDevice *,
                                                                     const guint8 *,
                                                                     guint16,
                                                                     GDestroyNotify,
                                                                     GoodixDefaultCallback,
                                                                     gpointer))
 {
-  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
-  /* No subclass provides get_mcu_cfg without also overriding change_state
-   * (5e0a does), but dereferencing it unguarded would NULL-crash any future
-   * base-scan user — same guard shape as the sibling FDT branches. */
-  if (!cls->get_mcu_cfg)
-    {
-      fpi_ssm_next_state (ssm);
-      return;
-    }
-  GoodixTls5xxMcuConfig cfg = cls->get_mcu_cfg ();
+  GoodixTls5xxMcuConfig cfg;
+  if (!get_mcu_cfg_or_skip (dev, ssm, &cfg))
+    return;
 
   mode_switch (dev, cfg.data, cfg.data_len, cfg.free_fn, goodixtls5xx_check_none_cmd, ssm);
 }
 static void
 on_calibrate_scan (FpDevice * dev, guint8 * data, guint16 len, gpointer ssm, GError * err)
 {
+  FpiDeviceGoodixTls5xx * self = FPI_DEVICE_GOODIXTLS5XX (dev);
+  FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
+  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (self);
+
   if (err)
     {
       fpi_ssm_mark_failed (ssm, err);
       return;
     }
-  FpiDeviceGoodixTls5xx * self = FPI_DEVICE_GOODIXTLS5XX (dev);
-  FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
-  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (self);
   if (!priv->calibration_img)
     priv->calibration_img = g_try_new0 (GoodixTls5xxPix, cls->scan_height * cls->scan_width);
   if (!priv->calibration_img)
@@ -168,6 +177,8 @@ void
 goodixtls5xx_check_firmware_version (FpDevice *dev, gchar *firmware,
                                      gpointer user_data, GError *error)
 {
+  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (FPI_DEVICE_GOODIXTLS5XX (dev));
+
   if (error)
     {
       fpi_ssm_mark_failed (user_data, error);
@@ -175,7 +186,6 @@ goodixtls5xx_check_firmware_version (FpDevice *dev, gchar *firmware,
     }
 
   fp_dbg ("Device firmware: \"%s\"", firmware);
-  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (FPI_DEVICE_GOODIXTLS5XX (dev));
 
   if (strcmp (firmware, cls->firmware_version))
     {
@@ -195,6 +205,7 @@ goodixtls5xx_check_preset_psk_read (FpDevice *dev, gboolean success,
                                     gpointer user_data, GError *error)
 {
   g_autofree gchar *psk_str = data_to_str (psk, length);
+  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
 
   if (error)
     {
@@ -212,8 +223,6 @@ goodixtls5xx_check_preset_psk_read (FpDevice *dev, gboolean success,
 
   fp_dbg ("Device PSK: 0x%s", psk_str);
   fp_dbg ("Device PSK flags: 0x%08x", flags);
-
-  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
 
   if (flags != cls->psk_flags)
     {
@@ -276,6 +285,8 @@ void
 goodixtls5xx_check_reset (FpDevice *dev, gboolean success, guint16 number,
                           gpointer user_data, GError *error)
 {
+  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
+
   if (error)
     {
       fpi_ssm_mark_failed (user_data, error);
@@ -292,7 +303,6 @@ goodixtls5xx_check_reset (FpDevice *dev, gboolean success, guint16 number,
 
   fp_dbg ("Device reset number: %d", number);
 
-  FpiDeviceGoodixTls5xxClass * cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
   if (number != cls->reset_number)
     {
       g_set_error (&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -359,19 +369,20 @@ static void
 scan_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
                   gpointer ssm, GError *err)
 {
+  FpImageDevice * img_dev = FP_IMAGE_DEVICE (dev);
+  FpiDeviceGoodixTls5xx * self = FPI_DEVICE_GOODIXTLS5XX (dev);
+  FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
+  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
+  GoodixTls5xxPix * raw_frame;
+  FpImage * img = NULL;
+
   if (err)
     {
       fpi_ssm_mark_failed (ssm, err);
       return;
     }
 
-  FpImageDevice * img_dev = FP_IMAGE_DEVICE (dev);
-
-  FpiDeviceGoodixTls5xx * self = FPI_DEVICE_GOODIXTLS5XX (dev);
-  FpiDeviceGoodixTls5xxPrivate * priv = fpi_device_goodixtls5xx_get_instance_private (self);
-  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
-
-  GoodixTls5xxPix * raw_frame = g_try_new0 (GoodixTls5xxPix, cls->scan_width * cls->scan_height);
+  raw_frame = g_try_new0 (GoodixTls5xxPix, cls->scan_width * cls->scan_height);
   if (!raw_frame)
     {
       fpi_ssm_mark_failed (ssm, fpi_device_error_new (FP_DEVICE_ERROR_GENERAL));
@@ -381,7 +392,6 @@ scan_on_read_img (FpDevice *dev, guint8 *data, guint16 len,
   if (priv->calibration_img)
     linear_subtract_inplace (raw_frame, priv->calibration_img, cls->scan_width * cls->scan_height);
 
-  FpImage * img = NULL;
   if (cls->process_raw_frame)
     {
       img = cls->process_raw_frame (raw_frame);
@@ -426,12 +436,9 @@ scan_run_state (FpiSsm * ssm, FpDevice * dev)
 
     case SCAN_STAGE_SWITCH_TO_FDT_MODE:
       {
-        if (!cls->get_mcu_cfg)
-          {
-            fpi_ssm_next_state (ssm);
-            break;
-          }
-        GoodixTls5xxMcuConfig cfg = cls->get_mcu_cfg ();
+        GoodixTls5xxMcuConfig cfg;
+        if (!get_mcu_cfg_or_skip (dev, ssm, &cfg))
+          break;
         goodix_send_mcu_switch_to_fdt_mode (dev, cfg.data, cfg.data_len, cfg.free_fn, goodixtls5xx_check_none, ssm);
       }
       break;
@@ -470,6 +477,11 @@ scan_run_state (FpiSsm * ssm, FpDevice * dev)
 
     case SCAN_STAGE_SWITCH_TO_FTD_UP:
       {
+        /* 27-byte merge layout is scoped to the 511-era base-class devices
+         * (mode header + bytes 10-25 from the FDT-DOWN table). The 5e0a
+         * bypasses this path entirely via its own scan SSM in goodix5e0a.c
+         * and never sets get_mcu_cfg/get_fdt_down_cfg, so no virtual
+         * merge hook is needed unless a future 5xx device conflicts. */
         if (cls->get_mcu_cfg && cls->get_fdt_down_cfg)
           {
             GoodixTls5xxMcuConfig mode = cls->get_mcu_cfg ();
@@ -588,16 +600,16 @@ static void
 dev_deactivate (FpImageDevice *img_dev)
 {
   FpDevice *dev = FP_DEVICE (img_dev);
+  GError *error = NULL;
+  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
 
   /* Orphan any in-flight TLS activation; its completion will drop. */
   goodix_activation_gen_bump (dev);
 
   goodix_reset_state (dev);
-  GError *error = NULL;
 
   goodix_shutdown_tls (dev, &error);
 
-  FpiDeviceGoodixTls5xxClass *cls = FPI_DEVICE_GOODIXTLS5XX_GET_CLASS (dev);
   goodixtls5xx_cleanup (FPI_DEVICE_GOODIXTLS5XX (dev));
 
   if (cls->reset_state)
@@ -610,6 +622,8 @@ static void
 tls_activation_complete (FpDevice *dev, gpointer user_data,
                          GError *error)
 {
+  FpImageDevice *image_dev;
+
   /* Drop orphaned completions without touching hardware. */
   if (GPOINTER_TO_UINT (user_data) != goodix_activation_gen_get (dev))
     {
@@ -619,14 +633,14 @@ tls_activation_complete (FpDevice *dev, gpointer user_data,
       return;
     }
 
+  image_dev = FP_IMAGE_DEVICE (dev);
+
   if (error)
     {
       fp_err ("failed to complete tls activation: %s", error->message);
-      FpImageDevice *image_dev = FP_IMAGE_DEVICE (dev);
       fpi_image_device_activate_complete (image_dev, error);
       return;
     }
-  FpImageDevice *image_dev = FP_IMAGE_DEVICE (dev);
 
   fpi_image_device_activate_complete (image_dev, error);
 }
@@ -642,6 +656,8 @@ goodixtls5xx_init_tls (FpDevice * dev)
 void
 fpi_device_goodixtls5xx_class_init (FpiDeviceGoodixTls5xxClass * self)
 {
+  FpImageDeviceClass *img_cls = FP_IMAGE_DEVICE_CLASS (self);
+
   self->get_mcu_cfg = NULL;
   self->get_fdt_down_cfg = NULL;
   self->get_fdt_up_cfg = NULL;
@@ -649,8 +665,6 @@ fpi_device_goodixtls5xx_class_init (FpiDeviceGoodixTls5xxClass * self)
   self->scan_height = 0;
   self->scan_width = 0;
   self->reset_state = NULL;
-
-  FpImageDeviceClass *img_cls = FP_IMAGE_DEVICE_CLASS (self);
 
   img_cls->change_state = dev_change_state;
   img_cls->deactivate = dev_deactivate;

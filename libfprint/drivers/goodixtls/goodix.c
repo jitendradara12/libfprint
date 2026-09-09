@@ -82,6 +82,20 @@ typedef struct
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (FpiDeviceGoodixTls, fpi_device_goodixtls,
                                      FP_TYPE_IMAGE_DEVICE);
 
+static GoodixCallbackInfo *
+make_cb_info (GCallback callback, gpointer user_data)
+{
+  GoodixCallbackInfo *cb_info = g_new0 (GoodixCallbackInfo, 1);
+
+  cb_info->callback = callback;
+  cb_info->user_data = user_data;
+
+  return cb_info;
+}
+
+/* Defined below; needed early by goodix_receive_data_cb. */
+static void goodix_receive_data (FpDevice *dev);
+
 gchar *
 data_to_str (guint8 *data, guint32 length)
 {
@@ -93,7 +107,7 @@ data_to_str (guint8 *data, guint32 length)
   return string;
 }
 
-void
+static void
 goodix_receive_done (FpDevice *dev, guint8 *data, guint16 length,
                      GError *error)
 {
@@ -130,7 +144,7 @@ goodix_receive_none (FpDevice *dev, guint8 *data, guint16 length,
   callback (dev, cb_info->user_data, error);
 }
 
-void
+static void
 goodix_receive_none_tolerant (FpDevice *dev, guint8 *data, guint16 length,
                               gpointer user_data, GError *error)
 {
@@ -153,7 +167,7 @@ goodix_receive_default (FpDevice *dev, guint8 *data, guint16 length,
   callback (dev, data, length, cb_info->user_data, error);
 }
 
-void
+static void
 goodix_receive_success (FpDevice *dev, guint8 *data, guint16 length,
                         gpointer user_data, GError *error)
 {
@@ -177,33 +191,7 @@ goodix_receive_success (FpDevice *dev, guint8 *data, guint16 length,
   callback (dev, data[0] == 0x00 ? FALSE : TRUE, cb_info->user_data, NULL);
 }
 
-void
-goodix_receive_reset (FpDevice *dev, guint8 *data, guint16 length,
-                      gpointer user_data, GError *error)
-{
-  g_autofree GoodixCallbackInfo *cb_info = user_data;
-  GoodixResetCallback callback = (GoodixResetCallback) cb_info->callback;
-
-  if (error)
-    {
-      callback (dev, FALSE, 0, cb_info->user_data, error);
-      return;
-    }
-
-  if (length != sizeof (guint8) + sizeof (guint16))
-    {
-      g_set_error (&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "Invalid reset reply length: %d", length);
-      callback (dev, FALSE, 0, cb_info->user_data, error);
-      return;
-    }
-
-  callback (dev, data[0] == 0x00 ? FALSE : TRUE,
-            GUINT16_FROM_LE (*(guint16 *) (data + sizeof (guint8))),
-            cb_info->user_data, NULL);
-}
-
-void
+static void
 goodix_receive_preset_psk_read (FpDevice *dev, guint8 *data, guint16 length,
                                 gpointer user_data, GError *error)
 {
@@ -257,32 +245,7 @@ goodix_receive_preset_psk_read (FpDevice *dev, guint8 *data, guint16 length,
             cb_info->user_data, NULL);
 }
 
-void
-goodix_receive_preset_psk_write (FpDevice *dev, guint8 *data,
-                                 guint16 length, gpointer user_data,
-                                 GError *error)
-{
-  g_autofree GoodixCallbackInfo *cb_info = user_data;
-  GoodixSuccessCallback callback = (GoodixSuccessCallback) cb_info->callback;
-
-  if (error)
-    {
-      callback (dev, FALSE, cb_info->user_data, error);
-      return;
-    }
-
-  if (length < sizeof (guint8))
-    {
-      g_set_error (&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "Invalid preset PSK write reply length: %d", length);
-      callback (dev, FALSE, cb_info->user_data, error);
-      return;
-    }
-
-  callback (dev, data[0] == 0x00 ? TRUE : FALSE, cb_info->user_data, NULL);
-}
-
-void
+static void
 goodix_receive_firmware_version (FpDevice *dev, guint8 *data,
                                  guint16 length, gpointer user_data,
                                  GError *error)
@@ -306,7 +269,7 @@ goodix_receive_firmware_version (FpDevice *dev, guint8 *data,
   callback (dev, payload, cb_info->user_data, NULL);
 }
 
-void
+static void
 goodix_receive_ack (FpDevice *dev, guint8 *data, guint16 length,
                     gpointer user_data, GError *error)
 {
@@ -355,7 +318,7 @@ goodix_receive_ack (FpDevice *dev, guint8 *data, guint16 length,
   priv->ack = FALSE;
 }
 
-void
+static void
 goodix_receive_protocol (FpDevice *dev, guint8 *data, guint32 length)
 {
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
@@ -398,7 +361,7 @@ goodix_receive_protocol (FpDevice *dev, guint8 *data, guint32 length)
   goodix_receive_done (dev, payload, payload_len, NULL);
 }
 
-void
+static void
 goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
 {
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
@@ -448,7 +411,7 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
   priv->length = 0;
 }
 
-void
+static void
 goodix_receive_data_cb (FpiUsbTransfer *transfer, FpDevice *dev,
                         gpointer user_data, GError *error)
 {
@@ -478,7 +441,7 @@ goodix_receive_data_cb (FpiUsbTransfer *transfer, FpDevice *dev,
   goodix_receive_data (dev);
 }
 
-void
+static void
 goodix_receive_timeout_cb (FpDevice *dev, gpointer user_data)
 {
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
@@ -527,7 +490,7 @@ goodix_stop_read_loop (FpDevice *dev)
   priv->length = 0;
 }
 
-void
+static void
 goodix_receive_data (FpDevice *dev)
 {
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
@@ -545,7 +508,7 @@ goodix_receive_data (FpDevice *dev)
                            goodix_receive_data_cb, NULL);
 }
 
-gboolean
+static gboolean
 goodix_send_data (FpDevice *dev, guint8 *data, guint32 length,
                   GDestroyNotify free_func, GError **error)
 {
@@ -577,7 +540,7 @@ goodix_send_data (FpDevice *dev, guint8 *data, guint32 length,
   return TRUE;
 }
 
-gboolean
+static gboolean
 goodix_send_pack (FpDevice *dev, guint8 flags, guint8 *payload,
                   guint16 length, GDestroyNotify free_func,
                   GError **error)
@@ -609,10 +572,11 @@ goodix_send_protocol (
     {
       /* A command is already running. */
       guint8 busy_cmd = priv->cmd;
+      GError *collision_error;
       fp_warn ("A command is already running: 0x%02x", busy_cmd);
       if (free_func)
         free_func ((void *) payload);
-      GError *collision_error =
+      collision_error =
         g_error_new (G_IO_ERROR, G_IO_ERROR_BUSY,
                      "A command is already running: 0x%02x", busy_cmd);
       goodix_receive_done (dev, NULL, 0, collision_error);
@@ -660,10 +624,7 @@ goodix_send_nop (FpDevice *dev, GoodixNoneCallback callback,
   /* Flush command: silence from the MCU indicates success. */
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_NOP, (guint8 *) &payload,
                             sizeof (payload), NULL, FALSE, GOODIX_NOP_TIMEOUT, FALSE,
@@ -675,29 +636,25 @@ goodix_send_nop (FpDevice *dev, GoodixNoneCallback callback,
                         NULL, FALSE, GOODIX_NOP_TIMEOUT, FALSE, NULL, NULL);
 }
 
-guint8 goodix5e0a_capture_payload[10] = {0x05, 0x00, 0xb0, 0x00, 0xb2, 0x00, 0xb0, 0x00, 0xb1, 0x00};
-
-void
+static void
 goodix_send_mcu_get_image (FpDevice *dev, GoodixImageCallback callback,
                            gpointer user_data)
 {
+  FpiDeviceGoodixTlsClass *class = FPI_DEVICE_GOODIXTLS_GET_CLASS (dev);
   GoodixCallbackInfo *cb_info;
   GoodixDefault payload_default = {.unused_flags = 0x01};
-  guint8 *payload = (guint8 *) &payload_default;
+  const guint8 *payload = (const guint8 *) &payload_default;
   guint16 len = sizeof (payload_default);
 
-  if (g_strcmp0 (fp_device_get_driver (dev), "goodixtls5e0a") == 0)
+  if (class->capture_payload != NULL && class->capture_payload_len > 0)
     {
-      payload = goodix5e0a_capture_payload;
-      len = sizeof (goodix5e0a_capture_payload);
+      payload = class->capture_payload;
+      len = class->capture_payload_len;
     }
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_MCU_GET_IMAGE, payload,
                             len, NULL, TRUE, GOODIX_TIMEOUT, TRUE,
@@ -721,21 +678,19 @@ goodix_send_mcu_switch_to_fdt_down (FpDevice *dev, const guint8 *mode, guint16 l
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
       cb = goodix_receive_default;
     }
 
   if (mode && length > 0 && mode[0] == 0x01)
     {
-      guint8 * payload = malloc (sizeof (guint8) * (length + 1));
+      guint8 *payload = g_malloc (sizeof (guint8) * (length + 1));
       memcpy (payload + 1, mode, length);
       payload[0] = 0xc;
       if (free_func)
         free_func ((void *) mode);
       goodix_send_protocol (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_DOWN, payload, length + 1,
-                            free, TRUE, 0, TRUE, cb, cb_info);
+                            g_free, TRUE, 0, TRUE, cb, cb_info);
     }
   else
     {
@@ -755,21 +710,19 @@ goodix_send_mcu_switch_to_fdt_up (FpDevice *dev, const guint8 *mode, guint16 len
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
       cb = goodix_receive_default;
     }
 
   if (mode && length > 0 && mode[0] == 0x01)
     {
-      guint8 * payload = malloc (sizeof (guint8) * (length + 1));
+      guint8 *payload = g_malloc (sizeof (guint8) * (length + 1));
       memcpy (payload + 1, mode, length);
       payload[0] = 0xe;
       if (free_func)
         free_func ((void *) mode);
       goodix_send_protocol (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_UP, payload, length + 1,
-                            free, TRUE, 0, TRUE, cb, cb_info);
+                            g_free, TRUE, 0, TRUE, cb, cb_info);
     }
   else
     {
@@ -789,10 +742,7 @@ goodix_send_mcu_switch_to_fdt_mode (FpDevice *dev, const guint8 *mode,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
       cb = goodix_receive_none;
     }
 
@@ -811,10 +761,7 @@ goodix_send_nav_0 (FpDevice *dev, GoodixDefaultCallback callback,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_NAV_0, (guint8 *) &payload,
                             sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
@@ -825,63 +772,6 @@ goodix_send_nav_0 (FpDevice *dev, GoodixDefaultCallback callback,
   goodix_send_protocol (dev, GOODIX_CMD_NAV_0, (guint8 *) &payload,
                         sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE, NULL,
                         NULL);
-}
-
-void
-goodix_send_mcu_switch_to_idle_mode (FpDevice *dev, guint8 sleep_time,
-                                     GoodixNoneCallback callback,
-                                     gpointer user_data)
-{
-  GoodixMcuSwitchToIdleMode payload = {.sleep_time = sleep_time};
-  GoodixCallbackInfo *cb_info;
-
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_MCU_SWITCH_TO_IDLE_MODE,
-                            (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                            GOODIX_TIMEOUT, FALSE, goodix_receive_none, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_MCU_SWITCH_TO_IDLE_MODE,
-                        (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                        GOODIX_TIMEOUT, FALSE, NULL, NULL);
-}
-
-void
-goodix_send_write_sensor_register (FpDevice *dev, guint16 address,
-                                   guint16 value,
-                                   GoodixNoneCallback callback,
-                                   gpointer user_data)
-{
-  /* Only support one address and one value. */
-
-  GoodixWriteSensorRegister payload = {.multiples = FALSE,
-                                       .address = GUINT16_TO_LE (address),
-                                       .value = GUINT16_TO_LE (value)};
-  GoodixCallbackInfo *cb_info;
-
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_WRITE_SENSOR_REGISTER,
-                            (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                            GOODIX_TIMEOUT, FALSE, goodix_receive_none, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_WRITE_SENSOR_REGISTER,
-                        (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                        GOODIX_TIMEOUT, FALSE, NULL, NULL);
 }
 
 void
@@ -899,10 +789,7 @@ goodix_send_read_sensor_register (FpDevice *dev, guint16 address,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_READ_SENSOR_REGISTER,
                             (guint8 *) &payload, sizeof (payload), NULL, TRUE,
@@ -925,10 +812,7 @@ goodix_send_upload_config_mcu (FpDevice *dev, guint8 *config,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_UPLOAD_CONFIG_MCU, config, length,
                             free_func, TRUE, GOODIX_TIMEOUT, TRUE,
@@ -941,35 +825,6 @@ goodix_send_upload_config_mcu (FpDevice *dev, guint8 *config,
 }
 
 void
-goodix_send_set_powerdown_scan_frequency (FpDevice             *dev,
-                                          guint16               powerdown_scan_frequency,
-                                          GoodixSuccessCallback callback,
-                                          gpointer              user_data)
-{
-  GoodixSetPowerdownScanFrequency payload = {
-    .powerdown_scan_frequency = GUINT16_TO_LE (powerdown_scan_frequency)
-  };
-  GoodixCallbackInfo *cb_info;
-
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_SET_POWERDOWN_SCAN_FREQUENCY,
-                            (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                            GOODIX_TIMEOUT, TRUE, goodix_receive_success, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_SET_POWERDOWN_SCAN_FREQUENCY,
-                        (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                        GOODIX_TIMEOUT, TRUE, NULL, NULL);
-}
-
-void
 goodix_send_enable_chip (FpDevice *dev, gboolean enable,
                          GoodixNoneCallback callback, gpointer user_data)
 {
@@ -978,10 +833,7 @@ goodix_send_enable_chip (FpDevice *dev, gboolean enable,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_ENABLE_CHIP, (guint8 *) &payload,
                             sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, FALSE,
@@ -995,35 +847,6 @@ goodix_send_enable_chip (FpDevice *dev, gboolean enable,
 }
 
 void
-goodix_send_reset (FpDevice *dev, gboolean reset_sensor, guint8 sleep_time,
-                   GoodixResetCallback callback, gpointer user_data)
-{
-  /* Only support reset sensor. */
-
-  GoodixReset payload = {.soft_reset_mcu = FALSE,
-                         .reset_sensor = reset_sensor ? TRUE : FALSE,
-                         .sleep_time = sleep_time};
-  GoodixCallbackInfo *cb_info;
-
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_RESET, (guint8 *) &payload,
-                            sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
-                            goodix_receive_reset, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_RESET, (guint8 *) &payload,
-                        sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE, NULL,
-                        NULL);
-}
-
-void
 goodix_send_query_firmware_version (FpDevice                     *dev,
                                     GoodixFirmwareVersionCallback callback,
                                     gpointer                      user_data)
@@ -1033,10 +856,7 @@ goodix_send_query_firmware_version (FpDevice                     *dev,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_FIRMWARE_VERSION, (guint8 *) &payload,
                             sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
@@ -1058,10 +878,7 @@ goodix_send_query_mcu_state (FpDevice *dev, GoodixNoneCallback callback,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_QUERY_MCU_STATE, (guint8 *) &payload,
                             sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, FALSE,
@@ -1074,7 +891,7 @@ goodix_send_query_mcu_state (FpDevice *dev, GoodixNoneCallback callback,
                         NULL);
 }
 
-void
+static void
 goodix_send_request_tls_connection (FpDevice             *dev,
                                     GoodixDefaultCallback callback,
                                     gpointer              user_data)
@@ -1084,10 +901,7 @@ goodix_send_request_tls_connection (FpDevice             *dev,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_REQUEST_TLS_CONNECTION,
                             (guint8 *) &payload, sizeof (payload), NULL, TRUE, 0,
@@ -1100,7 +914,7 @@ goodix_send_request_tls_connection (FpDevice             *dev,
                         GOODIX_TIMEOUT, TRUE, NULL, NULL);
 }
 
-void
+static void
 goodix_send_tls_successfully_established (FpDevice          *dev,
                                           GoodixNoneCallback callback,
                                           gpointer           user_data)
@@ -1110,10 +924,7 @@ goodix_send_tls_successfully_established (FpDevice          *dev,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
       /* Timeout needs to be at least 10ms. */
 
       goodix_send_protocol (dev, GOODIX_CMD_TLS_SUCCESSFULLY_ESTABLISHED,
@@ -1128,79 +939,6 @@ goodix_send_tls_successfully_established (FpDevice          *dev,
 }
 
 void
-goodix_send_set_drv_state (FpDevice *dev, GoodixNoneCallback cb,
-                           gpointer ud)
-{
-  /* Send 2-byte payload [0x01, 0x00]. */
-  GoodixDefault payload = {.unused_flags = 0x01};
-  GoodixCallbackInfo *cb_info;
-
-  if (cb)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (cb);
-      cb_info->user_data = ud;
-
-      goodix_send_protocol (dev, GOODIX_CMD_SET_DRV_STATE, (guint8 *) &payload,
-                            sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, FALSE,
-                            goodix_receive_none, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_SET_DRV_STATE, (guint8 *) &payload,
-                        sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, FALSE,
-                        NULL, NULL);
-}
-
-void
-goodix_send_mcu_get_pov_image (FpDevice *dev, GoodixDefaultCallback cb,
-                               gpointer ud)
-{
-  GoodixNone payload = {};
-  GoodixCallbackInfo *cb_info;
-
-  if (cb)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (cb);
-      cb_info->user_data = ud;
-
-      goodix_send_protocol (dev, GOODIX_CMD_MCU_GET_POV_IMAGE,
-                            (guint8 *) &payload, sizeof (payload), NULL, TRUE,
-                            GOODIX_TIMEOUT, TRUE, goodix_receive_default,
-                            cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_MCU_GET_POV_IMAGE, (guint8 *) &payload,
-                        sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
-                        NULL, NULL);
-}
-
-void
-goodix_send_set_pov_config (FpDevice *dev, const guint8 *cfg, guint16 len,
-                            GDestroyNotify ff, GoodixNoneCallback cb,
-                            gpointer ud)
-{
-  GoodixCallbackInfo *cb_info = NULL;
-  GoodixCmdCallback tramp = NULL;
-
-  if (cb)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (cb);
-      cb_info->user_data = ud;
-      tramp = goodix_receive_none;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_SET_POV_CONFIG, cfg, len, ff, TRUE,
-                        GOODIX_TIMEOUT, FALSE, tramp, cb_info);
-}
-
-void
 goodix_send_read_otp (FpDevice *dev, GoodixDefaultCallback callback,
                       gpointer user_data)
 {
@@ -1209,10 +947,7 @@ goodix_send_read_otp (FpDevice *dev, GoodixDefaultCallback callback,
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
       goodix_send_protocol (dev, GOODIX_CMD_READ_OTP, (guint8 *) &payload,
                             sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
@@ -1225,40 +960,27 @@ goodix_send_read_otp (FpDevice *dev, GoodixDefaultCallback callback,
                         NULL, NULL);
 }
 
-void
-goodix_send_preset_psk_write (FpDevice *dev, guint32 flags, guint8 *psk,
-                              guint16 length, GDestroyNotify free_func,
-                              GoodixSuccessCallback callback,
-                              gpointer user_data)
+/* Shared 0xe4 PSK-read sender. The two public wrappers below build
+ * differently-shaped request bodies (generic flags+length vs 5e0a
+ * length+offset+flags+reserved) around this single protocol call. */
+static void
+goodix_send_preset_psk_read_payload (FpDevice                   *dev,
+                                     const guint8               *payload,
+                                     guint16                     length,
+                                     GoodixPresetPskReadCallback callback,
+                                     gpointer                    user_data)
 {
-  /* Only support one flag, one payload, and one length. */
-
-  guint8 *payload = g_malloc (sizeof (GoodixPresetPsk) + length);
-  GoodixPresetPsk *preset_psk = (GoodixPresetPsk *) payload;
-  GoodixCallbackInfo *cb_info;
-
-  preset_psk->flags = GUINT32_TO_LE (flags);
-  preset_psk->length = GUINT32_TO_LE (length);
-  memcpy (payload + sizeof (GoodixPresetPsk), psk, length);
-  if (free_func)
-    free_func (psk);
+  GoodixCallbackInfo *cb_info = NULL;
+  GoodixCmdCallback cb = NULL;
 
   if (callback)
     {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_WRITE, payload,
-                            sizeof (GoodixPresetPsk) + length, g_free, TRUE, GOODIX_TIMEOUT,
-                            TRUE, goodix_receive_preset_psk_write, cb_info);
-      return;
+      cb_info = make_cb_info (G_CALLBACK (callback), user_data);
+      cb = goodix_receive_preset_psk_read;
     }
 
-  goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_WRITE, payload,
-                        sizeof (GoodixPresetPsk) + length, g_free, TRUE, GOODIX_TIMEOUT,
-                        TRUE, NULL, NULL);
+  goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_READ, payload, length,
+                        NULL, TRUE, GOODIX_TIMEOUT, TRUE, cb, cb_info);
 }
 
 void
@@ -1268,24 +990,9 @@ goodix_send_preset_psk_read (FpDevice *dev, guint32 flags, guint16 length,
 {
   GoodixPresetPsk payload = {.flags = GUINT32_TO_LE (flags),
                              .length = GUINT32_TO_LE (length)};
-  GoodixCallbackInfo *cb_info;
 
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_READ, (guint8 *) &payload,
-                            sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
-                            goodix_receive_preset_psk_read, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_READ, (guint8 *) &payload,
-                        sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE, NULL,
-                        NULL);
+  goodix_send_preset_psk_read_payload (dev, (const guint8 *) &payload,
+                                       sizeof (payload), callback, user_data);
 }
 
 void
@@ -1308,24 +1015,9 @@ goodix_send_preset_psk_read_5e0a (FpDevice                   *dev,
     .flags = GUINT32_TO_LE (flags),
     .reserved = 0,
   };
-  GoodixCallbackInfo *cb_info;
 
-  if (callback)
-    {
-      cb_info = g_new0 (GoodixCallbackInfo, 1);
-
-      cb_info->callback = G_CALLBACK (callback);
-      cb_info->user_data = user_data;
-
-      goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_READ, (guint8 *) &payload,
-                            sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE,
-                            goodix_receive_preset_psk_read, cb_info);
-      return;
-    }
-
-  goodix_send_protocol (dev, GOODIX_CMD_PRESET_PSK_READ, (guint8 *) &payload,
-                        sizeof (payload), NULL, TRUE, GOODIX_TIMEOUT, TRUE, NULL,
-                        NULL);
+  goodix_send_preset_psk_read_payload (dev, (const guint8 *) &payload,
+                                       sizeof (payload), callback, user_data);
 }
 
 gboolean
@@ -1360,10 +1052,13 @@ goodix_dev_init (FpDevice *dev, GError **error)
         guint16 vid = g_usb_device_get_vid (usb);
         guint16 pid = g_usb_device_get_pid (usb);
 
+        /* Address is unstable across suspend and re-enumeration; bus
+         * identifies the host controller and port the topology, so compare
+         * bus+port+vid+pid. The address snapshot is kept for diagnostics
+         * only. */
         if (priv->usb_identity_valid
-            && (bus != priv->last_usb_bus || addr != priv->last_usb_addr
-                || port != priv->last_usb_port || vid != priv->last_usb_vid
-                || pid != priv->last_usb_pid))
+            && (bus != priv->last_usb_bus || port != priv->last_usb_port
+                || vid != priv->last_usb_vid || pid != priv->last_usb_pid))
           {
             reenumerated = TRUE;
             priv->clean_close = FALSE;
@@ -1532,15 +1227,15 @@ goodix_dev_deinit (FpDevice *dev, GError **error)
   return released;
 }
 
-void
+static void
 goodix_read_tls (FpDevice *dev, GoodixTlsCallback callback,
                  gpointer user_data)
 {
-
-  fp_dbg ("goodix_read_tls()");
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
   FpiDeviceGoodixTlsPrivate *priv =
     fpi_device_goodixtls_get_instance_private (self);
+
+  fp_dbg ("goodix_read_tls()");
   priv->callback = callback;
   priv->user_data = user_data;
   priv->reply = TRUE;
@@ -1560,18 +1255,19 @@ on_goodix_tls_read_handshake (FpDevice *dev, guint8 *data,
                               GError *error)
 {
   FpiSsm *ssm = user_data;
+  FpiDeviceGoodixTls *self;
+  FpiDeviceGoodixTlsPrivate *priv;
+  int sent;
 
   if (error)
     {
       fpi_ssm_mark_failed (ssm, error);
       return;
     }
-  FpiDeviceGoodixTls *self =
-    FPI_DEVICE_GOODIXTLS (fpi_ssm_get_data (user_data));
-  FpiDeviceGoodixTlsPrivate *priv =
-    fpi_device_goodixtls_get_instance_private (self);
+  self = FPI_DEVICE_GOODIXTLS (fpi_ssm_get_data (user_data));
+  priv = fpi_device_goodixtls_get_instance_private (self);
 
-  int sent = goodix_tls_client_write (priv->tls_hop, data, length);
+  sent = goodix_tls_client_write (priv->tls_hop, data, length);
 
   if (sent < 0)
     {
@@ -1597,10 +1293,11 @@ static void
 on_tls_successfully_established (FpDevice *dev, gpointer user_data,
                                  GError *error)
 {
-  fp_dbg ("HANDSHAKE DONE");
   FpiDeviceGoodixTls * self = FPI_DEVICE_GOODIXTLS (dev);
   FpiDeviceGoodixTlsPrivate * priv =
     fpi_device_goodixtls_get_instance_private (self);
+
+  fp_dbg ("HANDSHAKE DONE");
   if (!priv->tls_ready_callback)
     {
       if (error)
@@ -1656,13 +1353,14 @@ tls_accept_wait_ok (FpDevice *dev)
 static void
 tls_handshake_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
+  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
+  FpiDeviceGoodixTlsPrivate *priv =
+    fpi_device_goodixtls_get_instance_private (self);
+
   if (error)
     {
       fp_err ("failed to do tls handshake: %s (code: %d)", error->message,
               error->code);
-      FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
-      FpiDeviceGoodixTlsPrivate *priv =
-        fpi_device_goodixtls_get_instance_private (self);
       if (priv->tls_ready_callback)
         {
           ((GoodixNoneCallback) priv->tls_ready_callback->callback)(
@@ -1680,14 +1378,13 @@ tls_handshake_done (FpiSsm *ssm, FpDevice *dev, GError *error)
    * timeout instead of failing here with a clear TLS error. */
   if (!tls_accept_wait_ok (dev))
     {
-      GError *accept_error = fpi_device_error_new_msg (
+      GError *accept_error;
+
+      accept_error = fpi_device_error_new_msg (
         FP_DEVICE_ERROR_GENERAL,
         "TLS handshake failed: device did not complete the handshake "
         "(likely PSK mismatch; see log for accept error)");
       fp_err ("%s", accept_error->message);
-      FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
-      FpiDeviceGoodixTlsPrivate *priv =
-        fpi_device_goodixtls_get_instance_private (self);
       if (priv->tls_ready_callback)
         {
           ((GoodixNoneCallback) priv->tls_ready_callback->callback)(
@@ -1713,11 +1410,13 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
     fpi_device_goodixtls_get_instance_private (self);
 
   int stage = fpi_ssm_get_cur_state (ssm);
+  guint8 buff[1024];
+  int size;
+  GError *err = NULL;
 
   if (stage == TLS_HANDSHAKE_STAGE_HELLO_S)
     {
-      guint8 buff[1024];
-      int size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
+      size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
       if (size < 0)
         {
           fpi_ssm_mark_failed (ssm, g_error_new (g_io_error_quark (), size,
@@ -1725,7 +1424,6 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
                                                  "hello"));
           return;
         }
-      GError *err = NULL;
       if (!goodix_send_pack (dev, GOODIX_FLAGS_TLS, buff, size, NULL, &err))
         {
           fpi_ssm_mark_failed (ssm, err);
@@ -1742,8 +1440,7 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
   else if (stage == TLS_HANDSHAKE_STAGE_CHANGE_CIPHER_S)
     {
       fp_dbg ("Reading to proxy back");
-      guint8 buff[1024];
-      int size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
+      size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
       if (size < 0)
         {
           fpi_ssm_mark_failed (ssm, g_error_new (g_io_error_quark (), size,
@@ -1752,7 +1449,6 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
 
           return;
         }
-      GError *err = NULL;
       if (!goodix_send_pack (dev, GOODIX_FLAGS_TLS, buff, size, NULL, &err))
         {
           fpi_ssm_mark_failed (ssm, err);
@@ -1774,13 +1470,16 @@ on_goodix_request_tls_connection (FpDevice *dev, guint8 *data,
                                   guint16 length, gpointer user_data,
                                   GError *error)
 {
+  FpiDeviceGoodixTls *self;
+  FpiDeviceGoodixTlsPrivate *priv;
+  int sent;
+
   if (error)
     {
       fp_err ("failed to get tls handshake: %s", error->message);
       /* Forward the error instead of faking success on a dead channel. */
-      FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
-      FpiDeviceGoodixTlsPrivate *priv =
-        fpi_device_goodixtls_get_instance_private (self);
+      self = FPI_DEVICE_GOODIXTLS (dev);
+      priv = fpi_device_goodixtls_get_instance_private (self);
       if (priv->tls_ready_callback)
         {
           ((GoodixNoneCallback) priv->tls_ready_callback->callback)(
@@ -1789,11 +1488,27 @@ on_goodix_request_tls_connection (FpDevice *dev, guint8 *data,
         }
       return;
     }
-  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (user_data);
-  FpiDeviceGoodixTlsPrivate *priv =
-    fpi_device_goodixtls_get_instance_private (self);
+  self = FPI_DEVICE_GOODIXTLS (user_data);
+  priv = fpi_device_goodixtls_get_instance_private (self);
 
-  goodix_tls_client_write (priv->tls_hop, data, length);
+  sent = goodix_tls_client_write (priv->tls_hop, data, length);
+
+  if (sent < 0)
+    {
+      GError *write_error = g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
+                                         "failed to send data to tls server");
+      if (priv->tls_ready_callback)
+        {
+          ((GoodixNoneCallback) priv->tls_ready_callback->callback)(
+            dev, priv->tls_ready_callback->user_data, write_error);
+          g_clear_pointer (&priv->tls_ready_callback, g_free);
+        }
+      else
+        {
+          g_error_free (write_error);
+        }
+      return;
+    }
 
   do_tls_handshake (dev);
 }
@@ -1801,20 +1516,20 @@ on_goodix_request_tls_connection (FpDevice *dev, guint8 *data,
 void
 goodix_tls_init (FpDevice *dev, GoodixNoneCallback callback, gpointer user_data)
 {
-  fp_dbg ("Starting up goodix tls server");
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
   FpiDeviceGoodixTlsPrivate *priv =
     fpi_device_goodixtls_get_instance_private (self);
+  GoodixTlsServer *s;
+  GError *err = NULL;
+
+  fp_dbg ("Starting up goodix tls server");
   g_assert (priv->tls_hop == NULL);
   priv->tls_hop = g_new0 (GoodixTlsServer, 1);
 
-  if (!priv->tls_ready_callback)
-    priv->tls_ready_callback = g_new0 (GoodixCallbackInfo, 1);
-  priv->tls_ready_callback->callback = G_CALLBACK (callback);
-  priv->tls_ready_callback->user_data = user_data;
-  GoodixTlsServer *s = priv->tls_hop;
+  g_clear_pointer (&priv->tls_ready_callback, g_free);
+  priv->tls_ready_callback = make_cb_info (G_CALLBACK (callback), user_data);
+  s = priv->tls_hop;
   s->user_data = self;
-  GError *err = NULL;
   if (!goodix_tls_server_init (priv->tls_hop, &err))
     {
       fp_err ("failed to init tls server, error: %s, code: %d",
@@ -1875,6 +1590,15 @@ goodix_tls_ready_image_handler (FpDevice *dev, guint8 *data,
 {
   GoodixCallbackInfo *cb_info = user_data;
   GoodixImageCallback callback = (GoodixImageCallback) cb_info->callback;
+  FpiDeviceGoodixTls *self;
+  FpiDeviceGoodixTlsPrivate *priv;
+  guint8 *tls_data;
+  guint16 tls_len;
+  int sent;
+  guint32 size;
+  guint8 *buff;
+  GError *err = NULL;
+  int read_size;
 
   if (error)
     {
@@ -1882,12 +1606,11 @@ goodix_tls_ready_image_handler (FpDevice *dev, guint8 *data,
       g_free (cb_info);
       return;
     }
-  FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
-  FpiDeviceGoodixTlsPrivate *priv =
-    fpi_device_goodixtls_get_instance_private (self);
+  self = FPI_DEVICE_GOODIXTLS (dev);
+  priv = fpi_device_goodixtls_get_instance_private (self);
 
-  guint8 *tls_data = data;
-  guint16 tls_len = length;
+  tls_data = data;
+  tls_len = length;
 
   if (length > 9 && data[0] == 0x00 && data[1] == 0x20)
     {
@@ -1907,23 +1630,31 @@ goodix_tls_ready_image_handler (FpDevice *dev, guint8 *data,
         }
     }
 
-  goodix_tls_client_write (priv->tls_hop, tls_data, tls_len);
+  sent = goodix_tls_client_write (priv->tls_hop, tls_data, tls_len);
 
-  guint32 size = 65535;
-  guint8 *buff = malloc (size);
-  GError *err = NULL;
-  int read_size = goodix_tls_server_read (priv->tls_hop, buff, size, &err);
+  if (sent < 0)
+    {
+      GError *write_error = g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
+                                         "failed to send data to tls server");
+      callback (dev, NULL, 0, cb_info->user_data, write_error);
+      g_free (cb_info);
+      return;
+    }
+
+  size = 65535;
+  buff = g_malloc (size);
+  read_size = goodix_tls_server_read (priv->tls_hop, buff, size, &err);
 
   if (read_size <= 0)
     {
       callback (dev, NULL, 0, cb_info->user_data, err);
-      free (buff);
+      g_free (buff);
       g_free (cb_info);
       return;
     }
 
   callback (dev, buff, read_size, cb_info->user_data, NULL);
-  free (buff);
+  g_free (buff);
   g_free (cb_info);
 }
 
@@ -1931,11 +1662,10 @@ void
 goodix_tls_read_image (FpDevice *dev, GoodixImageCallback callback,
                        gpointer user_data)
 {
-  g_assert (callback);
-  GoodixCallbackInfo *cb_info = g_new0 (GoodixCallbackInfo, 1);
+  GoodixCallbackInfo *cb_info;
 
-  cb_info->callback = G_CALLBACK (callback);
-  cb_info->user_data = user_data;
+  g_assert (callback);
+  cb_info = make_cb_info (G_CALLBACK (callback), user_data);
 
   goodix_send_mcu_get_image (dev, goodix_tls_ready_image_handler, cb_info);
 }
@@ -1948,4 +1678,8 @@ fpi_device_goodixtls_init (FpiDeviceGoodixTls *self)
 static void
 fpi_device_goodixtls_class_init (FpiDeviceGoodixTlsClass *class)
 {
+  /* Generic GoodixDefault MCU_GET_IMAGE payload unless a subclass
+   * provides capture_payload/capture_payload_len. */
+  class->capture_payload = NULL;
+  class->capture_payload_len = 0;
 }

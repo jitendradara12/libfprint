@@ -19,13 +19,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include <gio/gio.h>
 #include <glib.h>
-#include <stdio.h>
+#include <string.h>
 
+#include "fpi-compat.h"
 #include "goodix_proto.h"
 
-guint8
+static guint8
 goodix_calc_checksum (guint8 *data, guint16 length)
 {
   guint8 checksum = 0;
@@ -104,7 +104,7 @@ goodix_decode_pack (guint8 *data, guint32 data_len, guint8 *flags,
     return FALSE;
 
   *flags = pack->flags;
-  *payload = g_memdup (data + sizeof (GoodixPack) + sizeof (guint8), length);
+  *payload = g_memdup2 (data + sizeof (GoodixPack) + sizeof (guint8), length);
   *payload_len = length;
   *valid_checksum = goodix_calc_checksum (data, sizeof (GoodixPack)) ==
                     data[sizeof (GoodixPack)];
@@ -130,7 +130,7 @@ goodix_decode_protocol (guint8 *data, guint32 data_len, guint8 *cmd,
     return FALSE;
 
   *cmd = protocol->cmd;
-  *payload = g_memdup (data + sizeof (GoodixProtocol), length);
+  *payload = g_memdup2 (data + sizeof (GoodixProtocol), length);
   *payload_len = length;
   *valid_checksum =
     0xaa - goodix_calc_checksum (data, sizeof (GoodixProtocol) + length) ==
