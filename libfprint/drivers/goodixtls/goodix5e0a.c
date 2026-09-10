@@ -153,8 +153,8 @@ static void goodix5e0a_reset_touch_frames (FpiDeviceGoodixTls5e0a *self);
 #define GOODIX_5E0A_TLS_PARK_TTL_US (G_USEC_PER_SEC * 30)
 #define GOODIX_5E0A_TLS_PARK_HEALTH_TIMEOUT_MS 500
 #define GOODIX_5E0A_WARM_TTL_US (G_USEC_PER_SEC * 60)
-/* Finger-detect awaits take longer than other commands after a bus reset,
- * so they get their own timeout plus a single retry before failing. */
+/* Finger-detect awaits can take longer than other commands, so they get
+ * their own timeout plus a single retry before failing. */
 #define GOODIX_5E0A_FDT_TIMEOUT_MS 2000
 
 enum activate_states {
@@ -691,14 +691,13 @@ goodix5e0a_on_fdt_down_reply (FpDevice *dev, guint8 *data, guint16 len,
           fpi_ssm_mark_failed (ssm, err);
           return;
         }
-      /* A slow finger-detect response is retried once before failing; the
-       * late reply to the first attempt simply arrives during the second. */
+      /* A slow finger-detect response is retried once before failing. */
       if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_TIMED_OUT) &&
           !self->down_retried && self->scan_ssm == ssm)
         {
           self->down_retried = TRUE;
+          fp_dbg ("finger-detect timed out (%s), retrying once", err->message);
           g_error_free (err);
-          fp_dbg ("finger-detect timed out, retrying once");
           send_cmd_reply (dev, GOODIX_CMD_MCU_SWITCH_TO_FDT_DOWN,
                           goodix_5e0a_down_s12, sizeof (goodix_5e0a_down_s12),
                           GOODIX_5E0A_FDT_TIMEOUT_MS,
@@ -709,7 +708,7 @@ goodix5e0a_on_fdt_down_reply (FpDevice *dev, guint8 *data, guint16 len,
       return;
     }
 
-  /* A completed await re-arms the single-retry budget for the next one. */
+  /* Reset the retry flag on every completed await. */
   self->down_retried = FALSE;
 
   status = (len > 0) ? data[0] : 0x00;
