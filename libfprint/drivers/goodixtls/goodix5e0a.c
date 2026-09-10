@@ -1153,8 +1153,6 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
 
   self->session_started = FALSE;
   self->scan_gen++;
-  self->retry_guard = FALSE;
-  self->retry_guard_mono = 0;
   if (self->down_timeout)
     {
       g_source_destroy (self->down_timeout);
@@ -1186,6 +1184,8 @@ goodix5e0a_deactivate (FpImageDevice *img_dev)
     }
 
   self->tls_parked = FALSE;
+  self->retry_guard = FALSE;
+  self->retry_guard_mono = 0;
   goodix_session_mark_dirty (dev);
   goodix_shutdown_tls (dev, &tls_err);
   goodix_stop_read_loop (dev);
