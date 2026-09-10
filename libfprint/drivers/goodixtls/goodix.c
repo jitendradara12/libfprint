@@ -28,9 +28,12 @@
 #include <glib.h>
 #include <gusb.h>
 #include <openssl/ssl.h>
+#include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "drivers_api.h"
 #include "goodix.h"
@@ -99,7 +102,12 @@ static void goodix_receive_data (FpDevice *dev);
 gchar *
 data_to_str (guint8 *data, guint32 length)
 {
-  gchar *string = g_malloc ((length * 2) + 1);
+  gchar *string;
+
+  if (data == NULL || length == 0 || length > 4096)
+    return g_strdup ("");
+
+  string = g_malloc ((length * 2) + 1);
 
   for (guint32 i = 0; i < length; i++)
     g_snprintf (string + i * 2, 3, "%02x", data[i]);
@@ -228,8 +236,10 @@ goodix_receive_preset_psk_read (FpDevice *dev, guint8 *data, guint16 length,
       return;
     }
 
-  psk_len =
-    GUINT32_FROM_LE (((GoodixPresetPsk *) (data + sizeof (guint8)))->length);
+  {
+    memcpy (&psk_len, data + sizeof (guint8) + G_STRUCT_OFFSET (GoodixPresetPsk, length), sizeof (psk_len));
+    psk_len = GUINT32_FROM_LE (psk_len);
+  }
 
   if (length < psk_len + sizeof (guint8) + sizeof (GoodixPresetPsk))
     {
@@ -239,10 +249,13 @@ goodix_receive_preset_psk_read (FpDevice *dev, guint8 *data, guint16 length,
       return;
     }
 
-  callback (dev, TRUE,
-            GUINT32_FROM_LE (((GoodixPresetPsk *) (data + sizeof (guint8)))->flags),
-            data + sizeof (guint8) + sizeof (GoodixPresetPsk), psk_len,
-            cb_info->user_data, NULL);
+  {
+    guint32 psk_flags;
+    memcpy (&psk_flags, data + sizeof (guint8) + G_STRUCT_OFFSET (GoodixPresetPsk, flags), sizeof (psk_flags));
+    callback (dev, TRUE, GUINT32_FROM_LE (psk_flags),
+              data + sizeof (guint8) + sizeof (GoodixPresetPsk), psk_len,
+              cb_info->user_data, NULL);
+  }
 }
 
 static void
@@ -276,24 +289,31 @@ goodix_receive_ack (FpDevice *dev, guint8 *data, guint16 length,
   FpiDeviceGoodixTls *self = FPI_DEVICE_GOODIXTLS (dev);
   FpiDeviceGoodixTlsPrivate *priv =
     fpi_device_goodixtls_get_instance_private (self);
-  GoodixAck *ack = (GoodixAck *) data;
-  guint8 cmd;
+  guint8 cmd, flags;
 
   if (length != sizeof (GoodixAck))
     {
-      fp_warn ("Invalid ACK length: %d", length);
+      fp_warn ("Invalid ACK length: %u", length);
       return;
     }
 
-  if (!ack->always_true)
+  if (data == NULL)
     {
-      fp_warn ("Invalid ACK flags: 0x%02x", data[sizeof (guint8)]);
+      fp_warn ("Invalid ACK: NULL payload");
       return;
     }
 
-  cmd = ack->cmd;
+  /* Byte ops, not bitfields: layout is wire-defined. */
+  cmd = data[0];
+  flags = data[1];
 
-  if (ack->has_no_config)
+  if (!(flags & 0x01))
+    {
+      fp_warn ("Invalid ACK flags: 0x%02x", flags);
+      return;
+    }
+
+  if (flags & 0x02)
     fp_warn ("MCU has no config");
 
   if (priv->cmd != cmd)
@@ -304,7 +324,7 @@ goodix_receive_ack (FpDevice *dev, guint8 *data, guint16 length,
 
   if (!priv->ack)
     {
-      fp_warn ("Didn't excpect an ACK for command: 0x%02x", priv->cmd);
+      fp_warn ("Didn't expect an ACK for command: 0x%02x", priv->cmd);
       return;
     }
 
@@ -332,8 +352,17 @@ goodix_receive_protocol (FpDevice *dev, guint8 *data, guint32 length)
   if (!goodix_decode_protocol (data, length, &cmd, &payload, &payload_len,
                                &valid_checksum, &valid_null_checksum))
     {
-      fp_err ("Incomplete, size: %d", length);
+      fp_dbg ("Dropping short protocol frame, size: %u", length);
       return;
+    }
+
+  /* Either the standard checksum or the null checksum is accepted; some
+   * replies use the null value. Checksum mismatches are logged but do not
+   * block delivery: the calculation is not yet trusted against hardware
+   * quirks, and dropping here turns into command timeouts. */
+  if (!valid_checksum && !valid_null_checksum)
+    {
+      fp_dbg ("protocol frame with bad checksum");
     }
 
   if (cmd == GOODIX_CMD_ACK)
@@ -351,12 +380,12 @@ goodix_receive_protocol (FpDevice *dev, guint8 *data, guint32 length)
 
   if (!priv->reply)
     {
-      fp_warn ("Didn't excpect a reply for command: 0x%02x", priv->cmd);
+      fp_warn ("Didn't expect a reply for command: 0x%02x", priv->cmd);
       return;
     }
 
   if (priv->ack)
-    fp_warn ("Didn't got ACK for command: 0x%02x", priv->cmd);
+    fp_warn ("Missing ACK for command: 0x%02x", priv->cmd);
 
   goodix_receive_done (dev, payload, payload_len, NULL);
 }
@@ -372,6 +401,9 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
   guint16 payload_len;
   gboolean valid_checksum;
 
+  if (length == 0)
+    return;
+
   priv->data = g_realloc (priv->data, priv->length + length);
   memcpy (priv->data + priv->length, data, length);
   priv->length += length;
@@ -383,6 +415,13 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
       return;
     }
 
+  if (!valid_checksum)
+    {
+      /* Logged only: the checksum calculation is not yet trusted
+       * against hardware quirks. */
+      fp_dbg ("pack with bad checksum");
+    }
+
   switch (flags)
     {
     case GOODIX_FLAGS_MSG_PROTOCOL:
@@ -392,18 +431,18 @@ goodix_receive_pack (FpDevice *dev, guint8 *data, guint32 length)
 
     case GOODIX_FLAGS_TLS:
     case GOODIX_FLAGS_TLS_DATA:
-      fp_dbg ("Got TLS msg (0x%02x, %u bytes)", flags, payload_len);
+      fp_dbg ("Got TLS msg (%u bytes)", payload_len);
       if (priv->cmd == GOODIX_CMD_MCU_GET_IMAGE ||
           priv->cmd == GOODIX_CMD_REQUEST_TLS_CONNECTION ||
           (priv->reply && priv->callback != NULL && priv->cmd == 0))
         goodix_receive_done (dev, payload, payload_len, NULL);
       else
-        fp_dbg ("Discarding stale TLS msg (0x%02x, len %u) while waiting for cmd 0x%02x",
-                flags, payload_len, priv->cmd);
+        fp_dbg ("Discarding stale TLS msg while waiting for cmd 0x%02x",
+                priv->cmd);
       break;
 
     default:
-      fp_warn ("Unknown flags: 0x%02x", flags);
+      fp_dbg ("Unknown flags: 0x%02x", flags);
       break;
     }
 
@@ -1081,17 +1120,17 @@ goodix_dev_init (FpDevice *dev, GError **error)
       {
         priv->boot_seq++;
         if (reenumerated)
-          g_message ("5e0a USB reset taken (re-enumerated device, boot_seq=%u)",
-                     priv->boot_seq);
+          fp_dbg ("USB reset taken (re-enumerated device, boot_seq=%u)",
+                  priv->boot_seq);
         else
-          g_message ("5e0a USB reset taken (dirty close, boot_seq=%u)",
-                     priv->boot_seq);
+          fp_dbg ("USB reset taken (dirty close, boot_seq=%u)",
+                  priv->boot_seq);
         g_usb_device_reset (fpi_device_get_usb_device (dev), NULL);
       }
     else
       {
-        g_message ("5e0a USB reset skipped (clean close, boot_seq=%u)",
-                   priv->boot_seq);
+        fp_dbg ("USB reset skipped (clean close, boot_seq=%u)",
+                priv->boot_seq);
       }
   }
 
@@ -1402,6 +1441,80 @@ tls_handshake_done (FpiSsm *ssm, FpDevice *dev, GError *error)
     dev, on_tls_successfully_established, NULL);
 }
 
+/* Read one relay flight from the TLS server side.
+ *
+ * The server emits back-to-back TLS records (ServerHello through HelloDone,
+ * ChangeCipherSpec and Finished) on the socket pair. A single read returns
+ * whatever is pending and truncates the flight, which desynchronises the
+ * relay, so whole records are read (5-byte header, then the body) until
+ * poll reports the socket idle. Bounded by the caller buffer.
+ *
+ * Returns the flight size, or -1 when nothing was read or the flight does
+ * not fit: a truncated record must never be relayed. */
+static int
+goodix_tls_read_flight (GoodixTlsServer *tls, guint8 *buf, int buf_size)
+{
+  struct pollfd pfd;
+  int total = 0;
+
+  if (!tls || !buf || buf_size <= 0 || tls->client_fd < 0)
+    return -1;
+
+  pfd.fd = tls->client_fd;
+  pfd.events = POLLIN;
+
+  for (;;)
+    {
+      int hdr_got = 0;
+      int rec_len;
+
+      while (hdr_got < 5)
+        {
+          ssize_t n;
+
+          if (total + 5 > buf_size)
+            {
+              fp_dbg ("TLS relay flight does not fit, failing");
+              return -1;
+            }
+          n = read (tls->client_fd, buf + total + hdr_got, 5 - hdr_got);
+          if (n < 0 && errno == EINTR)
+            continue;
+          if (n <= 0)
+            return total > 0 ? total : -1;
+          hdr_got += n;
+        }
+
+      rec_len = (buf[total + 3] << 8) | buf[total + 4];
+      fp_dbg ("TLS relay record type=0x%02x len=%d",
+              buf[total], rec_len);
+      total += 5;
+
+      while (rec_len > 0)
+        {
+          ssize_t n;
+
+          if (total + rec_len > buf_size)
+            {
+              fp_dbg ("TLS relay flight does not fit, failing");
+              return -1;
+            }
+          n = read (tls->client_fd, buf + total, rec_len);
+          if (n < 0 && errno == EINTR)
+            continue;
+          if (n <= 0)
+            return -1;
+          total += n;
+          rec_len -= n;
+        }
+
+      if (poll (&pfd, 1, 50) <= 0 || !(pfd.revents & POLLIN))
+        break;
+    }
+
+  return total > 0 ? total : -1;
+}
+
 static void
 tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
 {
@@ -1410,14 +1523,14 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
     fpi_device_goodixtls_get_instance_private (self);
 
   int stage = fpi_ssm_get_cur_state (ssm);
-  guint8 buff[1024];
+  guint8 buff[4096];
   int size;
   GError *err = NULL;
 
   if (stage == TLS_HANDSHAKE_STAGE_HELLO_S)
     {
-      size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
-      if (size < 0)
+      size = goodix_tls_read_flight (priv->tls_hop, buff, sizeof (buff));
+      if (size <= 0)
         {
           fpi_ssm_mark_failed (ssm, g_error_new (g_io_error_quark (), size,
                                                  "failed to read tls server "
@@ -1440,8 +1553,8 @@ tls_handshake_run (FpiSsm *ssm, FpDevice *dev)
   else if (stage == TLS_HANDSHAKE_STAGE_CHANGE_CIPHER_S)
     {
       fp_dbg ("Reading to proxy back");
-      size = goodix_tls_client_read (priv->tls_hop, buff, sizeof (buff));
-      if (size < 0)
+      size = goodix_tls_read_flight (priv->tls_hop, buff, sizeof (buff));
+      if (size <= 0)
         {
           fpi_ssm_mark_failed (ssm, g_error_new (g_io_error_quark (), size,
                                                  "failed to read server "

@@ -92,19 +92,27 @@ goodix_decode_pack (guint8 *data, guint32 data_len, guint8 *flags,
                     guint8 **payload, guint16 *payload_len,
                     gboolean *valid_checksum)
 {
-  GoodixPack *pack = (GoodixPack *) data;
   guint16 length;
+  guint16 wire_len;
+
+  if (data == NULL || flags == NULL || payload == NULL ||
+      payload_len == NULL || valid_checksum == NULL)
+    return FALSE;
 
   if (data_len < sizeof (GoodixPack) + sizeof (guint8))
     return FALSE;
 
-  length = GUINT16_FROM_LE (pack->length);
+  memcpy (&wire_len, data + sizeof (guint8), sizeof (wire_len));
+  length = GUINT16_FROM_LE (wire_len);
 
-  if (data_len < length + sizeof (GoodixPack) + sizeof (guint8))
+  if (data_len < (guint32) length + sizeof (GoodixPack) + sizeof (guint8))
     return FALSE;
 
-  *flags = pack->flags;
-  *payload = g_memdup2 (data + sizeof (GoodixPack) + sizeof (guint8), length);
+  *flags = data[0];
+  if (length > 0)
+    *payload = g_memdup2 (data + sizeof (GoodixPack) + sizeof (guint8), length);
+  else
+    *payload = NULL;
   *payload_len = length;
   *valid_checksum = goodix_calc_checksum (data, sizeof (GoodixPack)) ==
                     data[sizeof (GoodixPack)];
@@ -118,19 +126,32 @@ goodix_decode_protocol (guint8 *data, guint32 data_len, guint8 *cmd,
                         gboolean *valid_checksum,
                         gboolean *valid_null_checksum)
 {
-  GoodixProtocol *protocol = (GoodixProtocol *) data;
-  guint16 length;
+  guint16 wire_len, length;
+
+  if (data == NULL || cmd == NULL || payload == NULL ||
+      payload_len == NULL || valid_checksum == NULL ||
+      valid_null_checksum == NULL)
+    return FALSE;
 
   if (data_len < sizeof (GoodixProtocol) + sizeof (guint8))
     return FALSE;
 
-  length = GUINT16_FROM_LE (protocol->length) - sizeof (guint8);
+  memcpy (&wire_len, data + sizeof (guint8), sizeof (wire_len));
+  wire_len = GUINT16_FROM_LE (wire_len);
 
-  if (data_len < length + sizeof (GoodixProtocol) + sizeof (guint8))
+  /* Wire length includes the trailing checksum byte. */
+  if (wire_len < sizeof (guint8))
+    return FALSE;
+  length = wire_len - sizeof (guint8);
+
+  if (data_len < (guint32) length + sizeof (GoodixProtocol) + sizeof (guint8))
     return FALSE;
 
-  *cmd = protocol->cmd;
-  *payload = g_memdup2 (data + sizeof (GoodixProtocol), length);
+  *cmd = data[0];
+  if (length > 0)
+    *payload = g_memdup2 (data + sizeof (GoodixProtocol), length);
+  else
+    *payload = NULL;
   *payload_len = length;
   *valid_checksum =
     0xaa - goodix_calc_checksum (data, sizeof (GoodixProtocol) + length) ==

@@ -45,8 +45,11 @@ static GError *
 err_from_ssl (void)
 {
   unsigned long code = ERR_get_error ();
-  const char *msg = ERR_reason_error_string (code);
+  const char *msg = code ? ERR_reason_error_string (code) : NULL;
 
+  if (code == 0)
+    return g_error_new (FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
+                        "TLS connection closed by peer");
   return g_error_new (FP_DEVICE_ERROR, FP_DEVICE_ERROR_GENERAL,
                       "SSL error (0x%lx): %s", code, msg ? msg : "unknown SSL error");
 }
@@ -75,23 +78,22 @@ tls_server_psk_server_callback (SSL           *ssl,
                   return 0;
                 }
               memcpy (psk, cls->psk, cls->psk_len);
-              fp_dbg ("5e0a PSK callback: using device-specific PSK (%d bytes, identity='%s')",
+              fp_dbg ("PSK callback: using device-specific PSK (%d bytes, identity='%s')",
                       cls->psk_len, identity ? identity : "");
               return cls->psk_len;
             }
         }
       else
         {
-          fp_warn ("5e0a PSK callback: dev %p is not GOODIXTLS5XX", dev);
+          fp_dbg ("PSK callback: unexpected device type");
         }
     }
   else
     {
-      fp_warn ("5e0a PSK callback: server (%p) or user_data (%p) is NULL",
-               server, server ? server->user_data : NULL);
+      fp_dbg ("PSK callback: missing server context");
     }
 
-  fp_err ("5e0a PSK callback: no valid device PSK available");
+  fp_err ("PSK callback: no valid device PSK available");
   return 0;
 }
 
@@ -116,7 +118,7 @@ tls_server_config_ctx (SSL_CTX *ctx)
   (void) SSL_CTX_set_ecdh_auto (ctx, 1);
   SSL_CTX_set_dh_auto (ctx, 1);
   if (SSL_CTX_set_cipher_list (ctx, GOODIX_TLS_CIPHERS) != 1)
-    g_warning ("5e0a TLS: failed to set CTX cipher list '%s'", GOODIX_TLS_CIPHERS);
+    fp_warn ("TLS: failed to set cipher list '%s'", GOODIX_TLS_CIPHERS);
   SSL_CTX_set_min_proto_version (ctx, TLS1_2_VERSION);
   SSL_CTX_set_max_proto_version (ctx, TLS1_2_VERSION);
   SSL_CTX_set_psk_server_callback (ctx, tls_server_psk_server_callback);
@@ -125,7 +127,7 @@ tls_server_config_ctx (SSL_CTX *ctx)
 int
 goodix_tls_client_write (GoodixTlsServer *self, guint8 *data, guint16 length)
 {
-  if (!self || self->client_fd < 0)
+  if (!self || !data || self->client_fd < 0)
     return -1;
 
   size_t total_written = 0;
@@ -141,28 +143,11 @@ goodix_tls_client_write (GoodixTlsServer *self, guint8 *data, guint16 length)
           return -1;
         }
       if (ret == 0)
-        break;
+        return -1;
       total_written += ret;
     }
 
   return (int) total_written;
-}
-
-int
-goodix_tls_client_read (GoodixTlsServer *self, guint8 *data, guint16 length)
-{
-  if (!self || self->client_fd < 0)
-    return -1;
-
-  ssize_t ret;
-
-  do
-    {
-      ret = read (self->client_fd, data, length * sizeof (guint8));
-    }
-  while (ret < 0 && errno == EINTR);
-
-  return (int) ret;
 }
 
 int
@@ -178,10 +163,22 @@ goodix_tls_server_read (GoodixTlsServer *self, guint8 *data,
       return -1;
     }
 
-  retr = SSL_read (self->ssl_layer, data, length * sizeof (guint8));
+  retr = SSL_read (self->ssl_layer, data, length);
 
-  if (retr <= 0 && error)
-    *error = err_from_ssl ();
+  if (retr <= 0)
+    {
+      int ssl_err = SSL_get_error (self->ssl_layer, retr);
+
+      if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK,
+                       "TLS read would block");
+        }
+      else if (error && *error == NULL)
+        {
+          *error = err_from_ssl ();
+        }
+    }
   return retr;
 }
 
@@ -192,7 +189,7 @@ tls_config_ssl (SSL *ssl)
   SSL_set_max_proto_version (ssl, TLS1_2_VERSION);
   SSL_set_psk_server_callback (ssl, tls_server_psk_server_callback);
   if (SSL_set_cipher_list (ssl, GOODIX_TLS_CIPHERS) != 1)
-    g_warning ("5e0a TLS: failed to set SSL cipher list '%s'", GOODIX_TLS_CIPHERS);
+    fp_warn ("TLS: failed to set cipher list '%s'", GOODIX_TLS_CIPHERS);
 }
 
 static void *
@@ -219,7 +216,7 @@ goodix_tls_init_serve (void *me)
                           err_code);
               first = FALSE;
             }
-          fp_warn ("5e0a TLS accept failed: %s (0x%lx, cipher: %s)",
+          fp_warn ("TLS accept failed: %s (0x%lx, cipher: %s)",
                    err_str, err_code,
                    SSL_get_cipher_name (self->ssl_layer));
         }
@@ -229,7 +226,7 @@ goodix_tls_init_serve (void *me)
     }
   else
     {
-      fp_dbg ("5e0a TLS connection ready (cipher: %s, proto: %s)",
+      fp_dbg ("TLS connection ready (cipher: %s, proto: %s)",
               SSL_get_cipher_name (self->ssl_layer),
               SSL_get_version (self->ssl_layer));
     }

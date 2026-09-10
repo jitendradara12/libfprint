@@ -1,5 +1,5 @@
-/* Goodix TLS driver for libfprint - 27c6:5e0a (Realme Book / ChicagoH)
- * Clean-room reverse engineering from passive USB captures of Windows driver traffic.
+/*
+ * Goodix driver for USB devices 27c6:5e0a
  *
  * Copyright (C) 2026 The libfprint Goodix 5e0a contributors
  *

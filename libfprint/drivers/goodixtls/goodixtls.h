@@ -99,19 +99,6 @@ int goodix_tls_client_write (GoodixTlsServer *self,
                              guint16          length);
 
 /**
- * @brief Read an encrypted response from the client end of the TLS connection.
- *  This is needed for e.g. handshaking
- *
- * @param self
- * @param data buffer to read into
- * @param length length of buffer
- * @return int bytes read or -1 for error or 0 for EOF
- */
-int goodix_tls_client_read (GoodixTlsServer *self,
-                            guint8          *data,
-                            guint16          length);
-
-/**
  * @brief Shutdown the TLS server
  *
  * @param self context to shutdown

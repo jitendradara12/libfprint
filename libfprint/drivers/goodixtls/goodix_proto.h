@@ -72,10 +72,12 @@ typedef struct __attribute__((__packed__)) _GoodixProtocol
 typedef struct __attribute__((__packed__)) _GoodixAck
 {
   guint8 cmd;
-  guint8 always_true : 1;
-  guint8 has_no_config : 1;
-  guint8 : 6;
+  guint8 flags;
 } GoodixAck;
+
+G_STATIC_ASSERT (sizeof (GoodixPack) == 3);
+G_STATIC_ASSERT (sizeof (GoodixProtocol) == 3);
+G_STATIC_ASSERT (sizeof (GoodixAck) == 2);
 
 typedef struct __attribute__((__packed__)) _GoodixNop
 {
